@@ -23,13 +23,12 @@
               </p>
               <p>
                 <i class="fa fa-envelope contactIcon" aria-hidden="true"></i>
-                <a href="mailto:jessembacon@me.com">
-                  jessembacon@me.com
+                <a href="mailto:jesse.bacon@flatstoneservices.com">
+                  jesse.bacon@flatstoneservices.com
                 </a>
               </p>
               <p>
-                <i class="fa fa-map-marker contactIcon" aria-hidden="true"></i>
-                42785 generation Dr. #332, Ashburn, VA. 20147
+                <i class="fa fa-map-marker contactIcon" aria-hidden="true"></i>Ashburn, VA. 20147
               </p>
               <p>
                 <i class="fa fa-linkedin-square contactIcon" aria-hidden="true"></i>
@@ -50,7 +49,7 @@
                 </div>
                 <div class="yearsOfExperience">
                   <span class="alignright">1</span>
-                  <span class="alignleft">years</span>
+                  <span class="alignleft">year</span>
                 </div>
               </div>
 
@@ -104,21 +103,11 @@
               <p class="bolded white">
                 Elastic Certified Engineer
               </p>
-              <p>
-                CompTIA Security ce
-              </p>
-              <p>
-                Splunk 6.0 Architect
-              </p>
-            </div>
-          </div>
-          <div class="item">
-            <h2>
-              EDUCATION
-            </h2>
-            <div class="smallText">
               <p class="bolded white">
-                Northern Virginia Community College
+                CompTIA Security+ CE
+              </p>
+              <p class="bolded white">
+                Splunk 6.0 Architect
               </p>
             </div>
           </div>
@@ -126,6 +115,12 @@
         
       </div>
       <div class="rightPanel">
+        <div class="contact-icons">
+          <div class="icon-container">
+            <i class="fa fa-envelope contact-icon" aria-hidden="true" title="Email me!"></i>
+            <i class="fa fa-phone contact-icon" aria-hidden="true" title="Send me a text message!"></i>
+          </div>
+        </div>
         <div>
           <h1>
             Jesse Bacon
@@ -320,5 +315,94 @@
       </div>
     </div>
   </page> 
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Get all contact icons
+      const contactIcons = document.querySelectorAll('.contact-icon');
+      
+      // Add click event listeners to each icon
+      contactIcons.forEach(icon => {
+        icon.addEventListener('click', function() {
+          // Get the icon's purpose from its title attribute
+          const purpose = this.getAttribute('title');
+          
+          // Create a styled alert box
+          const alertBox = document.createElement('div');
+          alertBox.className = 'custom-alert';
+          alertBox.innerHTML = `
+            <div class="alert-content">
+              <div class="alert-header">
+                <i class="${this.className.split(' ')[1]} ${this.className.split(' ')[2]}" aria-hidden="true"></i>
+                <span>Contact Alert</span>
+                <span class="close-btn">&times;</span>
+              </div>
+              <div class="alert-body">
+                You clicked: ${purpose}
+              </div>
+            </div>
+          `;
+          
+          // Add the alert box to the document
+          document.body.appendChild(alertBox);
+          
+          // Add styles to the alert box
+          const style = document.createElement('style');
+          style.textContent = `
+            .custom-alert {
+              position: fixed;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              background-color: rgba(0, 0, 0, 0.5);
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              z-index: 1000;
+            }
+            .alert-content {
+              background-color: white;
+              border-radius: 0.3cm;
+              width: 80%;
+              max-width: 10cm;
+              box-shadow: 0 0.1cm 0.3cm rgba(0, 0, 0, 0.3);
+              overflow: hidden;
+              border: 0.05cm solid #FF8C00;
+            }
+            .alert-header {
+              background-color: #FF8C00;
+              color: white;
+              padding: 0.3cm;
+              display: flex;
+              align-items: center;
+              font-weight: bold;
+              font-family: 'Source Sans Pro', sans-serif;
+            }
+            .alert-header i {
+              margin-right: 0.3cm;
+            }
+            .alert-body {
+              padding: 0.5cm;
+              font-family: 'Source Sans Pro', sans-serif;
+            }
+            .close-btn {
+              margin-left: auto;
+              cursor: pointer;
+              font-size: 0.7cm;
+            }
+          `;
+          document.head.appendChild(style);
+          
+          // Add click event to close button
+          const closeBtn = alertBox.querySelector('.close-btn');
+          closeBtn.addEventListener('click', function() {
+            document.body.removeChild(alertBox);
+          });
+        });
+      });
+    });
+  </script>
 </body>
 </html>
+
+

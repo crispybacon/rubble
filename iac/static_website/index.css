@@ -92,6 +92,9 @@ h2 {
 .contactIcon {
   width: 0.5cm;
   text-align: center;
+  margin-right: 0.3cm;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 p {
@@ -112,9 +115,12 @@ p {
 /* Layout */
 body {
   background: rgb(204,204,204); 
-  width: 21cm;
-  height: 29.7cm;
-  margin: 0 auto;
+  width: 90%;
+  height: 100vh;
+  margin: 1cm auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 /* Printing */
@@ -123,15 +129,18 @@ page {
   display: block;
   margin: 0 auto;
   margin-bottom: 0.5cm;
+  box-shadow: 0 0 0.5cm rgba(0,0,0,0.5);
+  width: 100%;
+  height: 90vh;
 }
 
 page[size="A4"] {  
-  width: 21cm;
-  height: 29.7cm; 
+  width: 100%;
+  height: 90vh; 
 }
 
 @page {
-   size: 21cm 29.7cm;
+   size: 100% auto;
    padding: 0;
    margin: 0mm;
    border: none;
@@ -147,17 +156,61 @@ page[size="A4"] {
 }
 
 .leftPanel {
-  width: 27%;
+  width: 25%;
   background-color: #484444;
   padding: 0.7cm;
   display: flex;
   flex-direction: column;
   align-items: center;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .rightPanel {
-  width: 73%;
+  width: 75%;
   padding: 0.7cm;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+  position: relative;
+}
+
+/* Contact Icons */
+.contact-icons {
+  position: absolute;
+  top: 0.7cm;
+  right: 0.7cm;
+  z-index: 10;
+}
+
+.icon-container {
+  display: flex;
+  gap: 0.3cm;
+  background-color: rgba(255, 255, 255, 0.8);
+  padding: 0.2cm 0.4cm;
+  border-radius: 1.5cm;
+  box-shadow: 0 0.1cm 0.2cm rgba(0, 0, 0, 0.2);
+  border: 0.05cm solid #FF8C00;
+}
+
+.contact-icon {
+  color: #FF8C00;
+  font-size: 0.6cm;
+  cursor: pointer;
+  width: 0.8cm;
+  height: 0.8cm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: white;
+  border-radius: 50%;
+  box-shadow: 0 0.05cm 0.1cm rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+
+.contact-icon:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0.1cm 0.2cm rgba(0, 0, 0, 0.4);
 }
 
 .leftPanel img {
@@ -174,6 +227,11 @@ page[size="A4"] {
   width: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.leftPanel .details .smallText p {
+  display: flex;
+  align-items: center;
 }
 
 .skill {
@@ -262,3 +320,6 @@ page[size="A4"] {
   list-style-type: disc;
 }
 /*End Layout*/
+
+
+
