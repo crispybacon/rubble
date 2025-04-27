@@ -26,6 +26,9 @@ class TestAWSInfraReport(unittest.TestCase):
             'output': {
                 'report_dir': 'test_reports',
                 'report_prefix': 'test_report'
+            },
+            's3': {
+                'bucket': 'test-bucket'
             }
         }
         
@@ -152,6 +155,101 @@ class TestAWSInfraReport(unittest.TestCase):
             mock_json_dump.assert_called_once()
             args, _ = mock_json_dump.call_args
             self.assertEqual(args[0], report)
+
+    @patch('boto3.client')
+    @patch('pathlib.Path.exists')
+    @patch('pathlib.Path.is_dir')
+    @patch('pathlib.Path.glob')
+    @patch('pathlib.Path.is_file')
+    @patch('pathlib.Path.relative_to')
+    @patch('pathlib.Path.__truediv__')  # Mock the / operator for Path
+    @patch('builtins.open', unittest.mock.mock_open(read_data='test data'))
+    def test_upload_static_website(self, mock_truediv, mock_relative_to, mock_is_file, mock_glob, mock_is_dir, mock_exists, mock_boto_client):
+        """Test uploading static website to S3."""
+        # Mock S3 client
+        mock_s3 = MagicMock()
+        mock_boto_client.return_value = mock_s3
+        
+        # Mock Path methods
+        mock_exists.return_value = True
+        mock_is_dir.return_value = True
+        
+        # Mock the content directory
+        mock_content_dir = MagicMock()
+        mock_truediv.return_value = mock_content_dir
+        
+        # Mock file paths
+        mock_file1 = MagicMock()
+        mock_file1.suffix = '.html'
+        mock_file1.name = 'index.html'
+        mock_file1.__str__.return_value = 'iac/static_website/content/index.html'
+        
+        mock_file2 = MagicMock()
+        mock_file2.suffix = '.css'
+        mock_file2.name = 'index.css'
+        mock_file2.__str__.return_value = 'iac/static_website/content/index.css'
+        
+        mock_file3 = MagicMock()
+        mock_file3.suffix = '.png'
+        mock_file3.name = 'me.png'
+        mock_file3.__str__.return_value = 'iac/static_website/content/me.png'
+        
+        # CloudFormation template that should be skipped
+        mock_file4 = MagicMock()
+        mock_file4.suffix = '.yaml'
+        mock_file4.name = 'cloudformation-template.yaml'
+        mock_file4.__str__.return_value = 'iac/static_website/cloudformation-template.yaml'
+        
+        mock_glob.return_value = [mock_file1, mock_file2, mock_file3, mock_file4]
+        mock_is_file.return_value = True
+        
+        # Mock relative_to to return the filename
+        mock_relative_to.side_effect = lambda x: Path(str(mock_relative_to._mock_self).split('/')[-1])
+        
+        # Test the function
+        result = aws_infra_report.upload_static_website('test-bucket', 'us-west-2')
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Check that put_object was called for each file except the CloudFormation template
+        self.assertEqual(mock_s3.put_object.call_count, 3)
+        
+        # Check content types were set correctly
+        content_types = [call[1].get('ContentType') for call in mock_s3.put_object.call_args_list]
+        self.assertIn('text/html', content_types)
+        self.assertIn('text/css', content_types)
+        self.assertIn('image/png', content_types)
+
+    @patch('aws_infra_report.upload_static_website')
+    @patch('aws_infra_report.load_config')
+    @patch('aws_infra_report.parse_arguments')
+    def test_main_with_upload_resume(self, mock_parse_arguments, mock_load_config, mock_upload_static_website):
+        """Test main function with upload_resume option."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.upload_resume = True
+        mock_args.s3_bucket = None
+        mock_args.region = None
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = self.test_config
+        
+        # Mock upload function to return True (success)
+        mock_upload_static_website.return_value = True
+        
+        # Test the function
+        with patch('aws_infra_report.boto3.client'), \
+             patch('aws_infra_report.get_instance_details'), \
+             patch('aws_infra_report.get_spot_price'), \
+             patch('aws_infra_report.generate_report'), \
+             patch('aws_infra_report.save_report'), \
+             patch('aws_infra_report.display_report'):
+            aws_infra_report.main()
+        
+        # Check that upload_static_website was called with the correct arguments
+        mock_upload_static_website.assert_called_once_with('test-bucket', 'us-west-2')
 
 
 if __name__ == '__main__':

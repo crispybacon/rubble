@@ -9,3 +9,8 @@ output:
   report_dir: "reports"
   # Report file name format (will be appended with timestamp)
   report_prefix: "aws_infra_report"
+
+# S3 settings
+s3:
+  # S3 bucket for uploading static website content
+  bucket: "your-s3-bucket-name"

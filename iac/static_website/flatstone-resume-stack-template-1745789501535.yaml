@@ -1,0 +1,225 @@
+---
+Metadata:
+  AWSToolsMetrics:
+    IaC_Generator: "arn:aws:cloudformation:us-east-1:851002115632:generatedTemplate/3b1cbe7b-0762-44af-9389-1fb001c49bdd"
+Resources:
+  LogsLogStreamCloudFrontE1QQL1YZZEFP31:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::Logs::LogStream"
+    DeletionPolicy: "Delete"
+    Properties:
+      LogStreamName: "CloudFront_E1QQL1YZZEFP31"
+      LogGroupName:
+        Ref: "LogsLogGroupFlatstonesolutions"
+  CloudFrontDistribution:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::CloudFront::Distribution"
+    DeletionPolicy: "Delete"
+    Properties:
+      DistributionConfig:
+        Logging:
+          IncludeCookies: true
+          Bucket: ""
+          Prefix: ""
+        Comment: ""
+        DefaultRootObject: ""
+        Origins:
+        - ConnectionTimeout: 10
+          OriginAccessControlId:
+            Ref: "CloudFrontOriginAccessControl"
+          ConnectionAttempts: 3
+          OriginCustomHeaders: []
+          DomainName:
+            Fn::GetAtt:
+            - "S3BucketFlatstonesolutionsuseast1"
+            - "RegionalDomainName"
+          OriginShield:
+            Enabled: true
+            OriginShieldRegion: "us-east-1"
+          S3OriginConfig:
+            OriginAccessIdentity: ""
+          OriginPath: "/static_website/index.html"
+          Id: "flatstone-solutions-us-east-1.s3.us-east-1.amazonaws.com"
+        ViewerCertificate:
+          MinimumProtocolVersion: "TLSv1"
+          SslSupportMethod: "vip"
+          CloudFrontDefaultCertificate: true
+        PriceClass: "PriceClass_100"
+        DefaultCacheBehavior:
+          Compress: true
+          FunctionAssociations: []
+          LambdaFunctionAssociations: []
+          TargetOriginId: "flatstone-solutions-us-east-1.s3.us-east-1.amazonaws.com"
+          ViewerProtocolPolicy: "allow-all"
+          GrpcConfig:
+            Enabled: false
+          TrustedSigners: []
+          FieldLevelEncryptionId: ""
+          TrustedKeyGroups: []
+          AllowedMethods:
+          - "HEAD"
+          - "GET"
+          CachedMethods:
+          - "HEAD"
+          - "GET"
+          SmoothStreaming: false
+          CachePolicyId:
+            Ref: "CloudFrontCachePolicy"
+        Staging: false
+        CustomErrorResponses: []
+        ContinuousDeploymentPolicyId: ""
+        OriginGroups:
+          Quantity: 0
+          Items: []
+        Enabled: true
+        Aliases: []
+        IPV6Enabled: true
+        WebACLId:
+          Fn::GetAtt:
+          - "WAFv2WebACLCLOUDFRONT"
+          - "Arn"
+        HttpVersion: "http2"
+        Restrictions:
+          GeoRestriction:
+            Locations: []
+            RestrictionType: "none"
+        CacheBehaviors: []
+  S3BucketFlatstonesolutionsuseast1:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy: "Delete"
+    Properties:
+      PublicAccessBlockConfiguration:
+        RestrictPublicBuckets: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        BlockPublicAcls: true
+      BucketName: "flatstone-solutions-us-east-1"
+      VersioningConfiguration:
+        Status: "Enabled"
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: "BucketOwnerEnforced"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - BucketKeyEnabled: true
+          ServerSideEncryptionByDefault:
+            SSEAlgorithm: "AES256"
+      Tags:
+      - Value: "marketing"
+        Key: "business_unit"
+      - Value: "prod"
+        Key: "environment"
+      - Value: "flatstone services"
+        Key: "organization"
+  WAFv2WebACLCLOUDFRONT:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::WAFv2::WebACL"
+    DeletionPolicy: "Delete"
+    Properties:
+      Description: ""
+      DefaultAction:
+        Allow: {}
+      Scope: "CLOUDFRONT"
+      Rules:
+      - OverrideAction:
+          None: {}
+        RuleLabels: []
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          MetricName: "AWS-AWSManagedRulesAmazonIpReputationList"
+          CloudWatchMetricsEnabled: true
+        Priority: 0
+        Statement:
+          ManagedRuleGroupStatement:
+            ManagedRuleGroupConfigs: []
+            VendorName: "AWS"
+            RuleActionOverrides: []
+            ExcludedRules: []
+            Name: "AWSManagedRulesAmazonIpReputationList"
+        Name: "AWS-AWSManagedRulesAmazonIpReputationList"
+      - OverrideAction:
+          None: {}
+        RuleLabels: []
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          MetricName: "AWS-AWSManagedRulesCommonRuleSet"
+          CloudWatchMetricsEnabled: true
+        Priority: 1
+        Statement:
+          ManagedRuleGroupStatement:
+            ManagedRuleGroupConfigs: []
+            VendorName: "AWS"
+            RuleActionOverrides: []
+            ExcludedRules: []
+            Name: "AWSManagedRulesCommonRuleSet"
+        Name: "AWS-AWSManagedRulesCommonRuleSet"
+      - OverrideAction:
+          None: {}
+        RuleLabels: []
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          MetricName: "AWS-AWSManagedRulesKnownBadInputsRuleSet"
+          CloudWatchMetricsEnabled: true
+        Priority: 2
+        Statement:
+          ManagedRuleGroupStatement:
+            ManagedRuleGroupConfigs: []
+            VendorName: "AWS"
+            RuleActionOverrides: []
+            ExcludedRules: []
+            Name: "AWSManagedRulesKnownBadInputsRuleSet"
+        Name: "AWS-AWSManagedRulesKnownBadInputsRuleSet"
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        MetricName: "CreatedByCloudFront-d5158f38"
+        CloudWatchMetricsEnabled: true
+      Name: "CreatedByCloudFront-d5158f38"
+  CloudFrontOriginAccessControl:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::CloudFront::OriginAccessControl"
+    DeletionPolicy: "Delete"
+    Properties:
+      OriginAccessControlConfig:
+        SigningBehavior: "always"
+        Description: "Flatstone Resume Hosting Application"
+        SigningProtocol: "sigv4"
+        OriginAccessControlOriginType: "s3"
+        Name: "flatstone-solutions-us-east-1.s3.us-east-1.amazonaws.com"
+  CloudFrontCachePolicy:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::CloudFront::CachePolicy"
+    DeletionPolicy: "Delete"
+    Properties:
+      CachePolicyConfig:
+        Comment: "Policy with caching enabled. Supports Gzip and Brotli compression."
+        MinTTL: 1
+        MaxTTL: 3.1536E7
+        ParametersInCacheKeyAndForwardedToOrigin:
+          QueryStringsConfig:
+            QueryStringBehavior: "none"
+          EnableAcceptEncodingBrotli: true
+          HeadersConfig:
+            HeaderBehavior: "none"
+          CookiesConfig:
+            CookieBehavior: "none"
+          EnableAcceptEncodingGzip: true
+        DefaultTTL: 86400
+        Name: "Managed-CachingOptimized"
+  LogsLogGroupFlatstonesolutions:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::Logs::LogGroup"
+    DeletionPolicy: "Delete"
+    Properties:
+      FieldIndexPolicies: []
+      LogGroupClass: "INFREQUENT_ACCESS"
+      RetentionInDays: 365
+      LogGroupName: "flatstone_solutions"
+      Tags:
+      - Value: "marketing"
+        Key: "business_unit"
+      - Value: "prod"
+        Key: "environment"
+      - Value: "flatsone services"
+        Key: "organization"
+      DataProtectionPolicy: {}

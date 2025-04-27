@@ -13,8 +13,8 @@ class TestStaticWebsite(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.html_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'iac' / 'static_website' / 'index.html'
-        self.css_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'iac' / 'static_website' / 'index.css'
+        self.html_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'iac' / 'static_website' / 'content' / 'index.html'
+        self.css_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'iac' / 'static_website' / 'content' / 'index.css'
         
         # Read the HTML and CSS files
         with open(self.html_path, 'r') as f:
