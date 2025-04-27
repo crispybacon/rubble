@@ -285,6 +285,11 @@ page[size="A4"] {
   left: 0.05cm;
 }
 
+/* Remove trailing line for the last work experience item */
+.workExperience>ul>li:last-child:before {
+  bottom: 0.1cm; /* Stop at the bullet point */
+}
+
 .workExperience>ul>li::after {
   content: '';
   position: absolute;
@@ -376,6 +381,7 @@ page[size="A4"] {
   list-style-type: disc;
 }
 /*End Layout*/
+
 
 
 

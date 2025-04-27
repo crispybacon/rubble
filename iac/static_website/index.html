@@ -421,9 +421,13 @@
       // Collapsible work experience functionality
       const workExperienceItems = document.querySelectorAll('.workExperience > ul > li');
       
-      // Initialize all items as expanded
+      // Initialize all items as collapsed by default
       workExperienceItems.forEach(item => {
         const jobContent = item.querySelector('.job-content');
+        // Add collapsed class by default
+        jobContent.classList.add('collapsed');
+        // Set initial padding
+        item.style.paddingBottom = '0.2cm';
         
         // Add click event to the job position (title)
         const jobPosition = item.querySelector('.jobPosition');
@@ -445,6 +449,7 @@
   </script>
 </body>
 </html>
+
 
 
 
