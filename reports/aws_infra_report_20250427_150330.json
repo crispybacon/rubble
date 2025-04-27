@@ -1,0 +1,27 @@
+{
+  "timestamp": "2025-04-27T19:03:30.928937",
+  "region": "us-east-1",
+  "instances": [
+    {
+      "InstanceId": "i-0f25203ca8d5bd026",
+      "InstanceType": "t4g.nano",
+      "State": "terminated",
+      "AvailabilityZone": "us-east-1d",
+      "LaunchTime": "2025-04-27T16:51:35+00:00",
+      "Tags": {
+        "Name": "test-spot"
+      },
+      "SpotPrice": 0.0013,
+      "Costs": {
+        "hourly": 0.0013,
+        "monthly": 0.95
+      }
+    }
+  ],
+  "summary": {
+    "total_instances": 1,
+    "running_instances": 0,
+    "total_hourly_cost": 0,
+    "total_monthly_cost": 0
+  }
+}
