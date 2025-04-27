@@ -116,14 +116,24 @@ class TestAWSInfraReport(unittest.TestCase):
                 'LaunchTime': '2023-01-02T00:00:00',
                 'SpotPrice': None,
                 'Costs': {'hourly': None, 'monthly': None}
+            },
+            {
+                'InstanceId': 'i-abcde',
+                'InstanceType': 't2.medium',
+                'State': 'terminated',
+                'AvailabilityZone': 'us-west-2c',
+                'LaunchTime': '2023-01-03T00:00:00',
+                'SpotPrice': 0.0456,
+                'Costs': {'hourly': 0.0456, 'monthly': 33.42}
             }
         ]
         
         report = aws_infra_report.generate_report('us-west-2', instances_data)
         
         self.assertEqual(report['region'], 'us-west-2')
-        self.assertEqual(report['summary']['total_instances'], 2)
+        self.assertEqual(report['summary']['total_instances'], 3)
         self.assertEqual(report['summary']['running_instances'], 1)
+        # Verify that terminated instances are excluded from cost calculations
         self.assertEqual(report['summary']['total_hourly_cost'], 0.0123)
         self.assertEqual(report['summary']['total_monthly_cost'], 9.01)
 

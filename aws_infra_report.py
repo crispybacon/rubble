@@ -124,8 +124,8 @@ def generate_report(region, instances_data):
         'summary': {
             'total_instances': len(instances_data),
             'running_instances': sum(1 for i in instances_data if i['State'] == 'running'),
-            'total_hourly_cost': sum(i['Costs']['hourly'] or 0 for i in instances_data),
-            'total_monthly_cost': sum(i['Costs']['monthly'] or 0 for i in instances_data)
+            'total_hourly_cost': sum(i['Costs']['hourly'] or 0 for i in instances_data if i['State'] != 'terminated'),
+            'total_monthly_cost': sum(i['Costs']['monthly'] or 0 for i in instances_data if i['State'] != 'terminated')
         }
     }
     
