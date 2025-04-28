@@ -643,31 +643,53 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_upload_static_website.assert_called_once_with('test-bucket', 'us-west-2', self.test_config)
         
     @patch('aws_infra_report.deploy_cloudformation_template')
+    @patch('update_website.update_index_html')
+    @patch('update_website.add_messaging_to_solution_demos')
+    @patch('aws_infra_report.upload_static_website')
     @patch('aws_infra_report.load_config')
     @patch('aws_infra_report.parse_arguments')
-    def test_main_with_deploy(self, mock_parse_arguments, mock_load_config, mock_deploy_cloudformation):
-        """Test main function with deploy option."""
+    def test_main_with_messaging_deploy(self, mock_parse_arguments, mock_load_config, 
+                                       mock_upload_static_website, mock_add_messaging, 
+                                       mock_update_index, mock_deploy_cloudformation):
+        """Test main function with messaging solution deployment."""
         # Mock arguments
         mock_args = MagicMock()
         mock_args.upload_resume = False
         mock_args.region = 'us-west-2'
-        mock_args.deploy = 'static_website'
-        mock_args.stack_name = 'test-stack'
-        mock_args.export_template = True
+        mock_args.deploy = 'messaging'
+        mock_args.stack_name = 'test-messaging-stack'
+        mock_args.static_website_stack = 'test-static-website-stack'
+        mock_args.export_template = False
+        mock_args.update = False
+        mock_args.attach_bucket_policy = False
         mock_parse_arguments.return_value = mock_args
         
         # Mock config
-        mock_load_config.return_value = self.test_config
+        mock_load_config.return_value = {
+            'region': 'us-west-2',
+            's3': {'bucket': 'test-bucket'},
+            'solutions': {
+                'messaging': {
+                    'template_path': 'iac/messaging/template.yaml'
+                }
+            }
+        }
         
-        # Mock deploy function to return success
+        # Mock deploy function to return success with API endpoint
         mock_deploy_cloudformation.return_value = {
             'status': 'success',
             'message': 'Stack create completed successfully!',
             'outputs': {
-                'CloudFrontDistributionDomainName': 'test.cloudfront.net',
-                'S3BucketName': 'test-bucket-us-west-2'
+                'ApiEndpoint': 'https://api.example.com/prod/contact'
             }
         }
+        
+        # Mock update_index_html and add_messaging_to_solution_demos to return True
+        mock_update_index.return_value = True
+        mock_add_messaging.return_value = True
+        
+        # Mock upload_static_website to return True
+        mock_upload_static_website.return_value = True
         
         # Test the function
         with patch('aws_infra_report.boto3.client'), \
@@ -679,8 +701,69 @@ class TestAWSInfraReport(unittest.TestCase):
             aws_infra_report.main()
         
         # Check that deploy_cloudformation_template was called with the correct arguments
-        mock_deploy_cloudformation.assert_called_once_with(
-            'static_website', 'test-stack', 'us-west-2', self.test_config, True
+        mock_deploy_cloudformation.assert_called_once()
+        call_args = mock_deploy_cloudformation.call_args[0]
+        self.assertEqual(call_args[0], 'messaging')
+        self.assertEqual(call_args[1], 'test-messaging-stack')
+        self.assertEqual(call_args[2], 'us-west-2')
+        
+        # Check that the StaticWebsiteStackName parameter was added to the config
+        config_arg = mock_deploy_cloudformation.call_args[0][3]
+        self.assertEqual(
+            config_arg['solutions']['messaging']['parameters']['StaticWebsiteStackName'],
+            'test-static-website-stack'
+        )
+        
+        # Check that update_index_html was called with the correct arguments
+        mock_update_index.assert_called_once_with(
+            'https://api.example.com/prod/contact', config_arg
+        )
+        
+        # Check that add_messaging_to_solution_demos was called
+        mock_add_messaging.assert_called_once_with(config_arg)
+        
+        # Check that upload_static_website was called with the correct arguments
+        mock_upload_static_website.assert_called_once_with(
+            'test-bucket', 'us-west-2', config_arg
+        )
+        
+    @patch('aws_infra_report.load_config')
+    @patch('aws_infra_report.parse_arguments')
+    def test_main_with_messaging_deploy_missing_static_website_stack(self, mock_parse_arguments, mock_load_config):
+        """Test main function with messaging solution deployment but missing static_website_stack parameter."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.upload_resume = False
+        mock_args.region = 'us-west-2'
+        mock_args.deploy = 'messaging'
+        mock_args.stack_name = 'test-messaging-stack'
+        mock_args.static_website_stack = None  # Missing static_website_stack
+        mock_args.export_template = False
+        mock_args.update = False
+        mock_args.attach_bucket_policy = False
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = {
+            'region': 'us-west-2',
+            's3': {'bucket': 'test-bucket'},
+            'solutions': {
+                'messaging': {
+                    'template_path': 'iac/messaging/template.yaml'
+                }
+            }
+        }
+        
+        # Test the function - should exit with error
+        with patch('sys.exit') as mock_exit, \
+             patch('builtins.print') as mock_print:
+            aws_infra_report.main()
+            
+            # Check that sys.exit was called with error code 1
+            mock_exit.assert_called_once_with(1)
+            
+            # Check that the error message was printed
+            mock_print.assert_any_call("Error: Static website stack name is required when deploying messaging solution. Please provide it via --static_website_stack option.")
         )
 
 

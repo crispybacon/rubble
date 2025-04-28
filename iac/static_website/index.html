@@ -181,7 +181,7 @@
                   Consulting Architect
                 </span>
                 <span>
-                  May 2022 - May 2024 (2 years)
+                  May 2022 - Present (3 years)
                 </span>
               </div>
               <div class="job-content">
@@ -383,27 +383,51 @@
         icon.addEventListener('click', function() {
           // Get the icon's purpose from its title attribute
           const purpose = this.getAttribute('title');
+          const isEmail = purpose.includes('Email');
           
-          // Create a styled alert box
-          const alertBox = document.createElement('div');
-          alertBox.className = 'custom-alert';
-          alertBox.innerHTML = `
+          // Create a styled contact form
+          const contactForm = document.createElement('div');
+          contactForm.className = 'custom-alert';
+          contactForm.innerHTML = `
             <div class="alert-content">
               <div class="alert-header">
                 <i class="${this.className.split(' ')[1]} ${this.className.split(' ')[2]}" aria-hidden="true"></i>
-                <span>Contact Alert</span>
+                <span>${isEmail ? 'Email Contact Form' : 'SMS Contact Form'}</span>
                 <span class="close-btn">&times;</span>
               </div>
               <div class="alert-body">
-                You clicked: ${purpose}
+                <form id="${isEmail ? 'email-form' : 'sms-form'}">
+                  <div class="form-group">
+                    <label for="name">Your Name:</label>
+                    <input type="text" id="name" name="name" required>
+                  </div>
+                  ${isEmail ? `
+                  <div class="form-group">
+                    <label for="email">Your Email:</label>
+                    <input type="email" id="email" name="email" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="subject">Subject:</label>
+                    <input type="text" id="subject" name="subject" required>
+                  </div>
+                  ` : ''}
+                  <div class="form-group">
+                    <label for="message">Message:</label>
+                    <textarea id="message" name="message" rows="5" required></textarea>
+                  </div>
+                  <div class="form-actions">
+                    <button type="submit" class="submit-btn">Send ${isEmail ? 'Email' : 'SMS'}</button>
+                  </div>
+                  <div id="form-status" class="form-status"></div>
+                </form>
               </div>
             </div>
           `;
           
-          // Add the alert box to the document
-          document.body.appendChild(alertBox);
+          // Add the contact form to the document
+          document.body.appendChild(contactForm);
           
-          // Add styles to the alert box
+          // Add styles to the contact form
           const style = document.createElement('style');
           style.textContent = `
             .custom-alert {
@@ -448,13 +472,122 @@
               cursor: pointer;
               font-size: 0.7cm;
             }
+            .form-group {
+              margin-bottom: 0.4cm;
+            }
+            .form-group label {
+              display: block;
+              margin-bottom: 0.1cm;
+              font-weight: bold;
+            }
+            .form-group input,
+            .form-group textarea {
+              width: 100%;
+              padding: 0.2cm;
+              border: 1px solid #ccc;
+              border-radius: 0.1cm;
+              font-family: 'Source Sans Pro', sans-serif;
+              font-size: 0.35cm;
+            }
+            .form-actions {
+              text-align: right;
+              margin-top: 0.4cm;
+            }
+            .submit-btn {
+              background-color: #FF8C00;
+              color: white;
+              border: none;
+              padding: 0.2cm 0.4cm;
+              border-radius: 0.1cm;
+              cursor: pointer;
+              font-family: 'Source Sans Pro', sans-serif;
+              font-weight: bold;
+            }
+            .submit-btn:hover {
+              background-color: #E67E00;
+            }
+            .form-status {
+              margin-top: 0.3cm;
+              padding: 0.2cm;
+              border-radius: 0.1cm;
+              text-align: center;
+              display: none;
+            }
+            .form-status.success {
+              background-color: #d4edda;
+              color: #155724;
+              display: block;
+            }
+            .form-status.error {
+              background-color: #f8d7da;
+              color: #721c24;
+              display: block;
+            }
           `;
           document.head.appendChild(style);
           
           // Add click event to close button
-          const closeBtn = alertBox.querySelector('.close-btn');
+          const closeBtn = contactForm.querySelector('.close-btn');
           closeBtn.addEventListener('click', function() {
-            document.body.removeChild(alertBox);
+            document.body.removeChild(contactForm);
+          });
+          
+          // Add submit event to form
+          const form = contactForm.querySelector('form');
+          form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formStatus = document.getElementById('form-status');
+            formStatus.className = 'form-status';
+            formStatus.textContent = 'Sending message...';
+            formStatus.style.display = 'block';
+            
+            // Get form data
+            const name = form.querySelector('#name').value;
+            const message = form.querySelector('#message').value;
+            let formattedMessage = `From: ${name}\n\n${message}`;
+            
+            if (isEmail) {
+              const email = form.querySelector('#email').value;
+              const subject = form.querySelector('#subject').value;
+              formattedMessage = `From: ${name} (${email})\nSubject: ${subject}\n\n${message}`;
+            }
+            
+            // Send the message to the API
+            // Replace this with the actual API endpoint URL from CloudFormation output
+            fetch('${ApiEndpoint}', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                messageType: isEmail ? 'email' : 'sms',
+                message: formattedMessage
+              })
+            })
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Network response was not ok');
+              }
+              return response.json();
+            })
+            .then(data => {
+              formStatus.textContent = 'Message sent successfully!';
+              formStatus.className = 'form-status success';
+              
+              // Clear form fields
+              form.reset();
+              
+              // Close the form after 3 seconds
+              setTimeout(() => {
+                document.body.removeChild(contactForm);
+              }, 3000);
+            })
+            .catch(error => {
+              formStatus.textContent = 'Error sending message. Please try again.';
+              formStatus.className = 'form-status error';
+              console.error('Error:', error);
+            });
           });
         });
       });
@@ -518,6 +651,8 @@
   </script>
 </body>
 </html>
+
+
 
 
 

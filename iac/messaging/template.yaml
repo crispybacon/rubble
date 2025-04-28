@@ -1,4 +1,7 @@
 ---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS End User Messaging Infrastructure for Contact Forms'
+
 Parameters:
   OrganizationTag:
     Type: String
@@ -26,61 +29,45 @@ Parameters:
     AllowedPattern: "^\\+1[0-9]{10}$"
     Default: "+18005551234"
 
-  VpcCidr:
+  SmsCountry:
     Type: String
-    Default: "10.0.0.0/16"
-    Description: CIDR block for VPC
-
-  PrivateSubnet1Cidr:
+    Description: Country code for SMS messages (ISO 3166-1 alpha-2 code)
+    Default: "US"
+    AllowedValues:
+      - "US"
+      
+  StaticWebsiteStackName:
     Type: String
-    Default: "10.0.1.0/24"
-    Description: CIDR block for private subnet 1
-
-  PrivateSubnet2Cidr:
-    Type: String
-    Default: "10.0.2.0/24"
-    Description: CIDR block for private subnet 2
-
-Metadata:
-  AWSToolsMetrics:
-    IaC_Generator: "arn:aws:cloudformation:us-east-1:851002115632:generatedTemplate/3b1cbe7b-0762-44af-9389-1fb001c49bdd"
+    Description: Name of the static website CloudFormation stack to update with the messaging API endpoint
+    Default: ""
 
 Resources:
-  # VPC and Networking Resources
-  VPC:
-    Type: AWS::EC2::VPC
+  # KMS Key for encryption
+  MessagingKMSKey:
+    Type: AWS::KMS::Key
     Properties:
-      CidrBlock: !Ref VpcCidr
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs ""]
+      Description: "KMS key for messaging service encryption"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: logs.amazonaws.com
+            Action:
+              - kms:Encrypt*
+              - kms:Decrypt*
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:Describe*
+            Resource: "*"
       Tags:
         - Key: "organization"
           Value: !Ref OrganizationTag
@@ -114,7 +101,7 @@ Resources:
     Type: AWS::PinpointSMSVoice::CountryRule
     Properties:
       ConfigurationSetName: !Ref SmsConfigurationSet
-      CountryCode: "US"
+      CountryCode: !Ref SmsCountry
       Enabled: true
 
   # SES Email Identity
@@ -123,38 +110,12 @@ Resources:
     Properties:
       EmailIdentity: !Ref EmailDestination
 
-  # Existing Resources (modified as needed)
-  ContactFormKMSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: "KMS key for contact form encryption"
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-            Action: "kms:*"
-            Resource: "*"
-          - Sid: Allow CloudWatch Logs
-            Effect: Allow
-            Principal:
-              Service: logs.amazonaws.com
-            Action:
-              - kms:Encrypt*
-              - kms:Decrypt*
-              - kms:ReEncrypt*
-              - kms:GenerateDataKey*
-              - kms:Describe*
-            Resource: "*"
-
+  # SNS Topic for notifications
   ContactFormTopic:
     Type: AWS::SNS::Topic
     Properties:
       DisplayName: "Contact Form Notifications"
-      KmsMasterKeyId: !Ref ContactFormKMSKey
+      KmsMasterKeyId: !Ref MessagingKMSKey
       Tags:
         - Key: "organization"
           Value: !Ref OrganizationTag
@@ -163,10 +124,62 @@ Resources:
         - Key: "environment"
           Value: !Ref EnvironmentTag
 
+  # Dead Letter Queue for failed messages
   ContactFormDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      KmsMasterKeyId: !Ref ContactFormKMSKey
+      KmsMasterKeyId: !Ref MessagingKMSKey
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+
+  # Lambda Function for processing contact form submissions
+  ContactFormLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ContactFormPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref ContactFormTopic
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailDestination}"
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt MessagingKMSKey.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt ContactFormDLQ.Arn
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
 
   ContactFormFunction:
     Type: AWS::Lambda::Function
@@ -232,15 +245,9 @@ Resources:
         Variables:
           EMAIL_DESTINATION: !Ref EmailDestination
           SMS_DESTINATION: !Ref SmsDestination
-      KmsKeyArn: !GetAtt ContactFormKMSKey.Arn
+      KmsKeyArn: !GetAtt MessagingKMSKey.Arn
       DeadLetterConfig:
         TargetArn: !GetAtt ContactFormDLQ.Arn
-      VpcConfig:
-        SecurityGroupIds: 
-          - !Ref LambdaSecurityGroup
-        SubnetIds: 
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
       ReservedConcurrentExecutions: 10
       MemorySize: 128
       Timeout: 30
@@ -252,68 +259,7 @@ Resources:
         - Key: "environment"
           Value: !Ref EnvironmentTag
 
-  # Lambda Permission for API Gateway
-  LambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref ContactFormFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ContactFormApi}/*"
-
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for Lambda function
-      VpcId: !Ref VPC
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  ContactFormLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: ContactFormPermissions
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sns:Publish
-                Resource: !Ref ContactFormTopic
-              - Effect: Allow
-                Action:
-                  - ses:SendEmail
-                  - ses:SendRawEmail
-                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailDestination}"
-              - Effect: Allow
-                Action:
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                Resource: !GetAtt ContactFormKMSKey.Arn
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
+  # API Gateway for the contact form
   ContactFormApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -342,11 +288,20 @@ Resources:
       RestApiId: !Ref ContactFormApi
       ResourceId: !Ref ContactFormResource
       HttpMethod: POST
-      AuthorizationType: AWS_IAM
+      AuthorizationType: NONE
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ContactFormFunction.Arn}/invocations"
+
+  # Lambda Permission for API Gateway
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ContactFormFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ContactFormApi}/*"
 
   # CORS Configuration
   ContactFormOptionsMethod:
@@ -388,8 +343,7 @@ Resources:
       RestApiId: !Ref ContactFormApi
       DeploymentId: !Ref ApiGatewayDeployment
       StageName: "prod"
-      CacheClusterEnabled: true
-      CacheClusterSize: '0.5'
+      CacheClusterEnabled: false
       TracingEnabled: true
       AccessLogSetting:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
@@ -399,21 +353,35 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       RetentionInDays: 7
-      KmsKeyId: !GetAtt ContactFormKMSKey.Arn
+      KmsKeyId: !GetAtt MessagingKMSKey.Arn
 
 Outputs:
   ApiEndpoint:
     Description: "API Gateway endpoint URL for contact form"
     Value: !Sub "https://${ContactFormApi}.execute-api.${AWS::Region}.amazonaws.com/prod/contact"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiEndpoint"
+  
   ContactFormTopicArn:
     Description: "ARN of the SNS topic for contact form notifications"
     Value: !Ref ContactFormTopic
-  VpcId:
-    Description: "VPC ID"
-    Value: !Ref VPC
-  PrivateSubnet1Id:
-    Description: "Private Subnet 1 ID"
-    Value: !Ref PrivateSubnet1
-  PrivateSubnet2Id:
-    Description: "Private Subnet 2 ID"
-    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-ContactFormTopicArn"
+  
+  SmsPoolId:
+    Description: "ID of the SMS Pool"
+    Value: !Ref SmsPool
+    Export:
+      Name: !Sub "${AWS::StackName}-SmsPoolId"
+  
+  SmsConfigurationSetName:
+    Description: "Name of the SMS Configuration Set"
+    Value: !Ref SmsConfigurationSet
+    Export:
+      Name: !Sub "${AWS::StackName}-SmsConfigurationSetName"
+  
+  EmailIdentity:
+    Description: "Email identity for contact form"
+    Value: !Ref EmailIdentity
+    Export:
+      Name: !Sub "${AWS::StackName}-EmailIdentity"

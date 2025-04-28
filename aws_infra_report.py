@@ -28,12 +28,16 @@ def parse_arguments():
                         help='Upload static website content to S3 bucket')
     parser.add_argument('--s3_bucket', type=str,
                         help='S3 bucket name for resume upload (overrides config file)')
-    parser.add_argument('--deploy', type=str, choices=['static_website'],
+    parser.add_argument('--deploy', type=str, choices=['static_website', 'messaging'],
                         help='Deploy a CloudFormation template for the specified solution')
+    parser.add_argument('--update', action='store_true',
+                        help='Update an existing CloudFormation stack with changes')
     parser.add_argument('--export_template', action='store_true',
                         help='Export the deployed CloudFormation template to the deployed directory')
     parser.add_argument('--stack_name', type=str,
                         help='CloudFormation stack name for deployment')
+    parser.add_argument('--static_website_stack', type=str,
+                        help='Name of the static website stack (required when deploying messaging solution)')
     parser.add_argument('--attach_bucket_policy', action='store_true',
                         help='Attach bucket policy to allow CloudFront to access the S3 bucket')
     parser.add_argument('--cloudfront_distribution_id', type=str,
@@ -54,185 +58,7 @@ def load_config(config_path):
         sys.exit(1)
 
 
-def deploy_cloudformation_template(solution_name, stack_name, region, config, export_template=False):
-    """
-    Deploy a CloudFormation template for a specific solution.
-    
-    Args:
-        solution_name: Name of the solution to deploy (e.g., 'static_website')
-        stack_name: Name of the CloudFormation stack
-        region: AWS region for deployment
-        config: Configuration dictionary
-        export_template: Whether to export the template after deployment
-        
-    Returns:
-        dict: Deployment result with status and outputs
-    """
-    try:
-        # Check if the solution exists in the config
-        if solution_name not in config.get('solutions', {}):
-            print(f"Error: Solution '{solution_name}' not found in configuration.")
-            return {'status': 'error', 'message': f"Solution '{solution_name}' not found in configuration."}
-        
-        solution_config = config['solutions'][solution_name]
-        template_path = solution_config.get('template_path')
-        
-        if not template_path or not Path(template_path).exists():
-            print(f"Error: Template file '{template_path}' not found.")
-            return {'status': 'error', 'message': f"Template file '{template_path}' not found."}
-        
-        # Read the template file
-        with open(template_path, 'r') as file:
-            template_body = file.read()
-        
-        # Initialize CloudFormation client
-        cfn = boto3.client('cloudformation', region_name=region)
-        
-        # Prepare parameters for CloudFormation
-        parameters = []
-        for key, value in solution_config.get('parameters', {}).items():
-            parameters.append({
-                'ParameterKey': key,
-                'ParameterValue': value
-            })
-        
-        # Add region parameter if it exists in the template
-        parameters.append({
-            'ParameterKey': 'AwsRegion',
-            'ParameterValue': region
-        })
-        
-        # Add tag parameters if they exist in the config
-        if 'tags' in config:
-            if 'organization' in config['tags']:
-                parameters.append({
-                    'ParameterKey': 'OrganizationTag',
-                    'ParameterValue': config['tags']['organization']
-                })
-            if 'business_unit' in config['tags']:
-                parameters.append({
-                    'ParameterKey': 'BusinessUnitTag',
-                    'ParameterValue': config['tags']['business_unit']
-                })
-            if 'environment' in config['tags']:
-                parameters.append({
-                    'ParameterKey': 'EnvironmentTag',
-                    'ParameterValue': config['tags']['environment']
-                })
-        
-        print(f"Deploying CloudFormation stack '{stack_name}' for solution '{solution_name}'...")
-        
-        # Create or update the stack
-        try:
-            # Check if stack exists
-            cfn.describe_stacks(StackName=stack_name)
-            # Stack exists, update it
-            response = cfn.update_stack(
-                StackName=stack_name,
-                TemplateBody=template_body,
-                Parameters=parameters,
-                Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND']
-            )
-            operation = 'update'
-        except cfn.exceptions.ClientError as e:
-            if 'does not exist' in str(e):
-                # Stack doesn't exist, create it
-                response = cfn.create_stack(
-                    StackName=stack_name,
-                    TemplateBody=template_body,
-                    Parameters=parameters,
-                    Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND']
-                )
-                operation = 'create'
-            elif 'No updates are to be performed' in str(e):
-                print("No updates are to be performed on the stack.")
-                # Get stack outputs
-                stack_info = cfn.describe_stacks(StackName=stack_name)
-                outputs = {output['OutputKey']: output['OutputValue'] 
-                          for output in stack_info['Stacks'][0].get('Outputs', [])}
-                
-                if export_template and 'CloudFrontDistributionDomainName' in outputs:
-                    export_deployed_template(solution_name, stack_name, region, config)
-                
-                # Check if we need to attach a bucket policy for the static website solution
-                if solution_name == 'static_website' and 'S3BucketName' in outputs:
-                    # Check if the template already has a bucket policy
-                    template_has_bucket_policy = 'S3BucketPolicy' in yaml.safe_load(template_body).get('Resources', {})
-                    
-                    if not template_has_bucket_policy:
-                        print("Template doesn't include bucket policy. Attaching it programmatically...")
-                        
-                        # Get CloudFront distribution ARN
-                        cf = boto3.client('cloudfront', region_name=region)
-                        distribution_id = outputs.get('CloudFrontDistributionId')
-                        
-                        if distribution_id:
-                            distribution_response = cf.get_distribution(Id=distribution_id)
-                            cloudfront_arn = distribution_response['Distribution']['ARN']
-                        else:
-                            cloudfront_arn = None
-                        
-                        # Attach bucket policy
-                        attach_bucket_policy(outputs['S3BucketName'], region, cloudfront_arn)
-                
-                return {
-                    'status': 'success', 
-                    'message': 'No updates were performed on the stack.',
-                    'outputs': outputs
-                }
-            else:
-                raise
-        
-        # Wait for stack creation/update to complete
-        print(f"Waiting for stack {operation} to complete...")
-        waiter = cfn.get_waiter(f'stack_{operation}_complete')
-        waiter.wait(StackName=stack_name)
-        
-        # Get stack outputs
-        stack_info = cfn.describe_stacks(StackName=stack_name)
-        outputs = {output['OutputKey']: output['OutputValue'] 
-                  for output in stack_info['Stacks'][0].get('Outputs', [])}
-        
-        print(f"Stack {operation} completed successfully!")
-        
-        # Print CloudFront URL if available
-        if 'CloudFrontDistributionDomainName' in outputs:
-            print(f"\nCloudFront Distribution URL: https://{outputs['CloudFrontDistributionDomainName']}")
-        
-        # Export the template if requested
-        if export_template:
-            export_deployed_template(solution_name, stack_name, region, config)
-        
-        # Check if we need to attach a bucket policy for the static website solution
-        if solution_name == 'static_website' and 'S3BucketName' in outputs:
-            # Check if the template already has a bucket policy
-            template_has_bucket_policy = 'S3BucketPolicy' in yaml.safe_load(template_body).get('Resources', {})
-            
-            if not template_has_bucket_policy:
-                print("Template doesn't include bucket policy. Attaching it programmatically...")
-                
-                # Get CloudFront distribution ARN
-                cf = boto3.client('cloudfront', region_name=region)
-                distribution_id = outputs.get('CloudFrontDistributionId')
-                
-                if distribution_id:
-                    distribution_response = cf.get_distribution(Id=distribution_id)
-                    cloudfront_arn = distribution_response['Distribution']['ARN']
-                else:
-                    cloudfront_arn = None
-                
-                # Attach bucket policy
-                attach_bucket_policy(outputs['S3BucketName'], region, cloudfront_arn)
-        
-        return {
-            'status': 'success',
-            'message': f"Stack {operation} completed successfully!",
-            'outputs': outputs
-        }
-    
-    except Exception as e:
-        print(f"Error deploying CloudFormation template: {e}")
-        return {'status': 'error', 'message': str(e)}
+
 
 
 def get_spot_price(ec2, instance_id):
@@ -778,7 +604,7 @@ def main():
         print("Bucket policy attached successfully.")
         return
     
-    # Check if we need to deploy a CloudFormation template
+    # Check if we need to deploy or update a CloudFormation template
     if args.deploy:
         solution_name = args.deploy
         
@@ -789,17 +615,63 @@ def main():
             
         stack_name = args.stack_name
         
-        print(f"Deploying CloudFormation template for solution '{solution_name}' with stack name '{stack_name}'...")
-        result = deploy_cloudformation_template(solution_name, stack_name, region, config, args.export_template)
+        # Check if static_website_stack is provided when deploying messaging solution
+        if solution_name == 'messaging' and not args.static_website_stack:
+            print("Error: Static website stack name is required when deploying messaging solution. Please provide it via --static_website_stack option.")
+            sys.exit(1)
+            
+        # Add static_website_stack to parameters if provided
+        if solution_name == 'messaging' and args.static_website_stack:
+            if 'solutions' not in config:
+                config['solutions'] = {}
+            if 'messaging' not in config['solutions']:
+                config['solutions']['messaging'] = {}
+            if 'parameters' not in config['solutions']['messaging']:
+                config['solutions']['messaging']['parameters'] = {}
+            config['solutions']['messaging']['parameters']['StaticWebsiteStackName'] = args.static_website_stack
+        
+        if args.update:
+            print(f"Updating CloudFormation stack '{stack_name}' for solution '{solution_name}'...")
+        else:
+            print(f"Deploying CloudFormation template for solution '{solution_name}' with stack name '{stack_name}'...")
+            
+        result = deploy_cloudformation_template(solution_name, stack_name, region, config, args.export_template, args.update)
         
         if result['status'] == 'error':
-            print(f"Error deploying CloudFormation template: {result['message']}")
+            print(f"Error {'updating' if args.update else 'deploying'} CloudFormation template: {result['message']}")
             sys.exit(1)
         
         # Print CloudFront URL if available
         if 'outputs' in result and 'CloudFrontDistributionDomainName' in result['outputs']:
             print(f"\nCloudFront Distribution URL: https://{result['outputs']['CloudFrontDistributionDomainName']}")
             print("\nYou can access your static website at the URL above.")
+        
+        # If this is the messaging solution, update the static website with the API endpoint
+        if solution_name == 'messaging' and 'outputs' in result and 'ApiEndpoint' in result['outputs']:
+            print("\nUpdating static website with messaging API endpoint...")
+            try:
+                # Import the update_website module
+                import update_website
+                
+                # Update the website
+                api_endpoint = result['outputs']['ApiEndpoint']
+                static_website_stack = args.static_website_stack
+                if not update_website.update_index_html(api_endpoint, config):
+                    print("Warning: Failed to update index.html with API endpoint.")
+                
+                # Add the messaging solution to the Solution Demonstrations section
+                if not update_website.add_messaging_to_solution_demos(config):
+                    print("Warning: Failed to add messaging solution to Solution Demonstrations section.")
+                
+                # Upload the updated website content if S3 bucket is available
+                s3_bucket = config.get('s3', {}).get('bucket')
+                if s3_bucket:
+                    print(f"\nUploading updated static website content to S3 bucket: {s3_bucket}")
+                    success = upload_static_website(s3_bucket, region, config)
+                    if not success:
+                        print("Warning: Failed to upload updated static website content.")
+            except Exception as e:
+                print(f"Warning: Failed to update static website: {e}")
             
         # Provide instructions for exporting the template
         if not args.export_template:
@@ -873,6 +745,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 

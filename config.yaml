@@ -30,10 +30,33 @@ solutions:
     parameters:
       BucketNamePrefix: "flatstone-solutions"
       OriginShieldRegion: "us-east-2"
+  
+  # Messaging solution for SMS and email contact forms
+  messaging:
+    # Template location
+    template_path: "iac/messaging/template.yaml"
+    # Directory for storing deployed templates
+    deployed_dir: "iac/deployed"
+    # Default parameters for CloudFormation deployment
+    parameters:
+      # No additional parameters needed as they are pulled from the messaging section
 
 # S3 settings
 s3:
   # S3 bucket for uploading static website content
   bucket: "flatstone-solutions-us-east-2"
 
+# Messaging settings for SMS and email notifications
+messaging:
+  # Email notification settings
+  email:
+    # Destination email address for contact form submissions
+    destination: "jesse.bacon@flatstoneservices.com"
+  
+  # SMS notification settings
+  sms:
+    # Destination phone number for SMS messages (must be in E.164 format)
+    destination: "+17033986004"
+    # Country code for SMS messages (ISO 3166-1 alpha-2 code)
+    country: "US"
 

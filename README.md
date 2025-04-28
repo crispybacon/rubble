@@ -10,7 +10,9 @@ A Python tool for generating reports about deployed AWS infrastructure, with a f
 - Output reports in JSON format
 - Display formatted reports in the console
 - Deploy and manage AWS solutions using CloudFormation
+- Update existing CloudFormation stacks with changes
 - Automatic bucket policy configuration for S3 buckets to allow CloudFront access
+- SMS and email contact forms for static website
 
 ## Requirements
 
@@ -39,8 +41,19 @@ solutions:
     parameters:
       BucketNamePrefix: "your-bucket-prefix"
       OriginShieldRegion: "us-east-1"
+  messaging:
+    template_path: "iac/messaging/template.yaml"
+    deployed_dir: "iac/deployed"
+    parameters:
+      # No additional parameters needed as they are pulled from the messaging section
 s3:
   bucket: "your-s3-bucket-name"
+messaging:
+  email:
+    destination: "your-email@example.com"
+  sms:
+    destination: "+12345678901"  # Must be in E.164 format
+    country: "US"  # ISO 3166-1 alpha-2 code
 ```
 
 ## Usage
@@ -51,6 +64,18 @@ python aws_infra_report.py
 
 # Override region from command line
 python aws_infra_report.py --region us-west-2
+
+# Deploy a CloudFormation stack for a solution
+python aws_infra_report.py --deploy static_website --stack_name your-stack-name
+
+# Update an existing CloudFormation stack with changes
+python aws_infra_report.py --deploy static_website --stack_name your-stack-name --update
+
+# Deploy the messaging solution for SMS and email contact forms
+python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
+
+# Update an existing messaging solution
+python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
 
 # Note: The bucket policy is automatically attached during CloudFormation deployment.
 # The following commands are only needed if you want to manually update an existing bucket policy:
@@ -80,6 +105,8 @@ This solution deploys a professional resume/portfolio website using AWS CloudFor
 - WAF (Web Application Firewall) for security
 - CloudWatch Logs for monitoring
 - Origin Shield for improved caching and reduced origin load
+- SMS and email contact forms with AWS End User Messaging
+- API Gateway and Lambda for processing contact form submissions
 
 The static website features a responsive design with collapsible sections for work experience and solution demonstrations.
 
@@ -116,6 +143,43 @@ To customize the website content:
 1. Modify the HTML, CSS, and image files in the `iac/static_website` directory
 2. Re-upload the content using the `--upload_resume` flag
 
+### Contact Form Configuration
+
+The static website includes SMS and email contact forms that allow visitors to send messages directly to you. To configure these forms:
+
+1. Update the `messaging` section in your `config.yaml` file:
+   ```yaml
+   messaging:
+     email:
+       destination: "your-email@example.com"  # The email address where form submissions will be sent
+     sms:
+       destination: "+12345678901"  # Your phone number in E.164 format (e.g., +12345678901)
+       country: "US"  # Currently only US numbers are supported
+   ```
+
+2. Deploy the messaging solution:
+   ```bash
+   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack
+   ```
+
+3. After deployment, the contact form functionality will be available on your website. Visitors can click the email or SMS icons in the top right corner to open the respective contact forms.
+
+**Note:** The email address specified in the configuration must be verified in Amazon SES before it can be used for sending emails. The verification process is initiated automatically during deployment, but you'll need to check your email and confirm the verification.
+
+### Updating Deployed Solutions
+
+To update an existing CloudFormation stack with changes:
+
+```bash
+# Update the static website stack
+python aws_infra_report.py --deploy static_website --stack_name your-stack-name --update
+
+# Update the messaging stack
+python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
+```
+
+When you update the messaging solution, the static website will be automatically updated with the new API endpoint and the messaging solution will be added to the Solution Demonstrations section.
+
 ### Exporting Deployed Template
 
 To export the deployed CloudFormation template for reference:
@@ -126,7 +190,61 @@ The exported template will be saved to the `iac/deployed` directory.
 
 </details>
 
+<details>
+<summary><strong>AWS End User Messaging</strong> - SMS and email contact forms with AWS messaging services</summary>
+
+### AWS End User Messaging Solution
+
+This solution deploys the infrastructure needed for SMS and email contact forms using AWS messaging services. The architecture includes:
+
+- AWS PinpointSMSVoice for SMS messaging
+- Amazon SES for email delivery
+- API Gateway for handling form submissions
+- Lambda function for processing messages
+- KMS for encryption
+- CloudWatch Logs for monitoring
+
+### Deployment Instructions
+
+1. Update the configuration in `config.yaml` with your messaging settings:
+   ```yaml
+   messaging:
+     email:
+       destination: "your-email@example.com"  # The email address where form submissions will be sent
+     sms:
+       destination: "+12345678901"  # Your phone number in E.164 format (e.g., +12345678901)
+       country: "US"  # Currently only US numbers are supported
+   ```
+
+2. Deploy the CloudFormation stack:
+   ```bash
+   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
+   ```
+   
+   **Note:** The `--static_website_stack` parameter is required and should specify the name of the static website stack that you want to update with the messaging API endpoint. This is necessary because there could be multiple static website deployments in the same AWS account.
+
+3. The deployment will automatically update the static website with the API endpoint for the contact forms. If you've already deployed the static website, the messaging solution will be added to the Solution Demonstrations section.
+
+4. If you need to update the messaging solution later:
+   ```bash
+   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --update
+   ```
+
+### Security Considerations
+
+- All data is encrypted using KMS
+- API Gateway is configured with appropriate CORS headers
+- Lambda function has minimal IAM permissions
+- Dead Letter Queue for handling failed message deliveries
+
+</details>
+
 <!-- Additional solutions can be added here following the same pattern -->
+
+
+
+
+
 
 
 
