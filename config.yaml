@@ -1,7 +1,7 @@
 # AWS Infrastructure Report Configuration
 
 # AWS region to scan for resources
-region: us-east-1
+region: us-east-2
 
 # Output settings
 output:
@@ -10,7 +10,30 @@ output:
   # Report file name format (will be appended with timestamp)
   report_prefix: "aws_infra_report"
 
+# Default tags to apply to all resources
+tags:
+  organization: "flatstone services"
+  business_unit: "marketing"
+  environment: "dev"
+
+# Solutions configuration
+solutions:
+  # Static website solution
+  static_website:
+    # Template location
+    template_path: "iac/static_website/template.yaml"
+    # Directory for storing deployed templates
+    deployed_dir: "iac/deployed"
+    # Content directory for static website files
+    content_dir: "iac/static_website/content"
+    # Default parameters for CloudFormation deployment
+    parameters:
+      BucketNamePrefix: "flatstone-solutions"
+      OriginShieldRegion: "us-east-2"
+
 # S3 settings
 s3:
   # S3 bucket for uploading static website content
-  bucket: "your-s3-bucket-name"
+  bucket: "flatstone-solutions-us-east-2"
+
+

@@ -29,6 +29,11 @@ class TestAWSInfraReport(unittest.TestCase):
             },
             's3': {
                 'bucket': 'test-bucket'
+            },
+            'tags': {
+                'organization': 'flatstone services',
+                'business_unit': 'marketing',
+                'environment': 'dev'
             }
         }
         
@@ -98,6 +103,66 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_ec2.describe_spot_price_history.return_value = {'SpotPriceHistory': []}
         spot_price = aws_infra_report.get_spot_price(mock_ec2, 'i-12345')
         self.assertIsNone(spot_price)
+        
+    @patch('boto3.client')
+    def test_get_instance_details(self, mock_boto_client):
+        """Test getting instance details with and without tags."""
+        # Mock EC2 client
+        mock_ec2 = MagicMock()
+        mock_boto_client.return_value = mock_ec2
+        
+        # Mock instance details with tags
+        mock_ec2.describe_instances.return_value = {
+            'Reservations': [{
+                'Instances': [{
+                    'InstanceId': 'i-12345',
+                    'InstanceType': 't2.micro',
+                    'State': {'Name': 'running'},
+                    'Placement': {'AvailabilityZone': 'us-west-2a'},
+                    'LaunchTime': datetime.now(),
+                    'Tags': [
+                        {'Key': 'Name', 'Value': 'test-instance'},
+                        {'Key': 'environment', 'Value': 'test'}
+                    ]
+                }]
+            }]
+        }
+        
+        # Test with existing tags
+        details = aws_infra_report.get_instance_details(mock_ec2, 'i-12345', self.test_config)
+        self.assertEqual(details['InstanceId'], 'i-12345')
+        self.assertEqual(details['InstanceType'], 't2.micro')
+        self.assertEqual(details['State'], 'running')
+        self.assertEqual(details['Tags']['Name'], 'test-instance')
+        # The instance tag should take precedence over the config tag
+        self.assertEqual(details['Tags']['environment'], 'test')
+        # Config tags should be added if not present on the instance
+        self.assertEqual(details['Tags']['organization'], 'flatstone services')
+        self.assertEqual(details['Tags']['business_unit'], 'marketing')
+        
+        # Mock instance details without tags
+        mock_ec2.describe_instances.return_value = {
+            'Reservations': [{
+                'Instances': [{
+                    'InstanceId': 'i-67890',
+                    'InstanceType': 't2.small',
+                    'State': {'Name': 'stopped'},
+                    'Placement': {'AvailabilityZone': 'us-west-2b'},
+                    'LaunchTime': datetime.now()
+                    # No Tags
+                }]
+            }]
+        }
+        
+        # Test without tags
+        details = aws_infra_report.get_instance_details(mock_ec2, 'i-67890', self.test_config)
+        self.assertEqual(details['InstanceId'], 'i-67890')
+        self.assertEqual(details['InstanceType'], 't2.small')
+        self.assertEqual(details['State'], 'stopped')
+        # All config tags should be added
+        self.assertEqual(details['Tags']['organization'], 'flatstone services')
+        self.assertEqual(details['Tags']['business_unit'], 'marketing')
+        self.assertEqual(details['Tags']['environment'], 'dev')
 
     def test_generate_report(self):
         """Test report generation."""
@@ -221,6 +286,330 @@ class TestAWSInfraReport(unittest.TestCase):
         self.assertIn('text/css', content_types)
         self.assertIn('image/png', content_types)
 
+    @patch('boto3.client')
+    @patch('aws_infra_report.load_config')
+    def test_deploy_cloudformation_template(self, mock_load_config, mock_boto_client):
+        """Test deploying a CloudFormation template."""
+        # Mock configuration
+        mock_load_config.return_value = {
+            'solutions': {
+                'static_website': {
+                    'template_path': 'iac/static_website/template.yaml',
+                    'deployed_dir': 'iac/deployed',
+                    'parameters': {
+                        'BucketNamePrefix': 'test-bucket',
+                        'OriginShieldRegion': 'us-west-2'
+                    }
+                }
+            },
+            'tags': {
+                'organization': 'flatstone services',
+                'business_unit': 'marketing',
+                'environment': 'dev'
+            }
+        }
+        
+        # Mock CloudFormation client
+        mock_cfn = MagicMock()
+        mock_boto_client.return_value = mock_cfn
+        
+        # Mock stack creation
+        mock_cfn.describe_stacks.side_effect = mock_cfn.exceptions.ClientError(
+            {'Error': {'Code': 'ValidationError', 'Message': 'Stack does not exist'}},
+            'DescribeStacks'
+        )
+        
+        # Mock successful stack creation
+        mock_cfn.create_stack.return_value = {'StackId': 'test-stack-id'}
+        
+        # Mock stack outputs
+        mock_cfn.describe_stacks.side_effect = None
+        mock_cfn.describe_stacks.return_value = {
+            'Stacks': [{
+                'Outputs': [
+                    {'OutputKey': 'CloudFrontDistributionDomainName', 'OutputValue': 'test.cloudfront.net'},
+                    {'OutputKey': 'S3BucketName', 'OutputValue': 'test-bucket-us-west-2'}
+                ]
+            }]
+        }
+        
+        # Mock file operations
+        with patch('builtins.open', unittest.mock.mock_open(read_data='test template')):
+            with patch('pathlib.Path.exists', return_value=True):
+                with patch('pathlib.Path.mkdir'):
+                    # Test the function
+                    result = aws_infra_report.deploy_cloudformation_template(
+                        'static_website', 'test-stack', 'us-west-2', 
+                        mock_load_config.return_value, False
+                    )
+        
+        # Check the result
+        self.assertEqual(result['status'], 'success')
+        self.assertIn('outputs', result)
+        self.assertEqual(result['outputs']['CloudFrontDistributionDomainName'], 'test.cloudfront.net')
+        
+        # Verify CloudFormation client was called correctly
+        mock_boto_client.assert_called_with('cloudformation', region_name='us-west-2')
+        mock_cfn.create_stack.assert_called_once()
+        
+        # Verify that the tag parameters were included
+        call_args = mock_cfn.create_stack.call_args[1]
+        parameters = call_args['Parameters']
+        
+        # Extract parameters into a dict for easier checking
+        param_dict = {p['ParameterKey']: p['ParameterValue'] for p in parameters}
+        
+        self.assertEqual(param_dict['OrganizationTag'], 'flatstone services')
+        self.assertEqual(param_dict['BusinessUnitTag'], 'marketing')
+        self.assertEqual(param_dict['EnvironmentTag'], 'dev')
+        
+    @patch('boto3.client')
+    @patch('aws_infra_report.load_config')
+    def test_export_deployed_template(self, mock_load_config, mock_boto_client):
+        """Test exporting a deployed CloudFormation template."""
+        # Mock configuration
+        mock_load_config.return_value = {
+            'solutions': {
+                'static_website': {
+                    'deployed_dir': 'iac/deployed'
+                }
+            }
+        }
+        
+        # Mock CloudFormation client
+        mock_cfn = MagicMock()
+        mock_boto_client.return_value = mock_cfn
+        
+        # Mock get_template response
+        mock_cfn.get_template.return_value = {
+            'TemplateBody': 'test template content'
+        }
+        
+        # Mock file operations
+        with patch('builtins.open', unittest.mock.mock_open()) as mock_open:
+            with patch('pathlib.Path.mkdir'):
+                # Test the function
+                result = aws_infra_report.export_deployed_template(
+                    'static_website', 'test-stack', 'us-west-2', 
+                    mock_load_config.return_value
+                )
+        
+        # Check the result
+        self.assertTrue(result)
+        
+        # Verify CloudFormation client was called correctly
+        mock_boto_client.assert_called_with('cloudformation', region_name='us-west-2')
+        mock_cfn.get_template.assert_called_with(
+            StackName='test-stack',
+            TemplateStage='Original'
+        )
+        
+        # Verify file was written
+        mock_open.assert_called_once()
+        mock_open().write.assert_called_once_with('test template content')
+        
+    @patch('boto3.client')
+    def test_attach_bucket_policy(self, mock_boto_client):
+        """Test attaching a bucket policy to an S3 bucket."""
+        # Mock S3 client
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        
+        # Configure the mock to return different clients based on service name
+        def get_client(service_name, region_name):
+            if service_name == 's3':
+                return mock_s3
+            elif service_name == 'cloudfront':
+                return mock_cf
+            return MagicMock()
+            
+        mock_boto_client.side_effect = get_client
+        
+        # Mock CloudFront list_distributions response
+        mock_cf.list_distributions.return_value = {
+            'DistributionList': {
+                'Items': [
+                    {
+                        'Id': 'E3V5CI7VI4S0QQ',
+                        'ARN': 'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ',
+                        'Origins': {
+                            'Items': [
+                                {
+                                    'DomainName': 'flatstone-solutions-us-east-2.s3.us-east-2.amazonaws.com'
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+        
+        # Test with provided CloudFront ARN and no existing policy
+        mock_s3.get_bucket_policy.side_effect = mock_s3.exceptions.NoSuchBucketPolicy({}, 'GetBucketPolicy')
+        
+        result = aws_infra_report.attach_bucket_policy(
+            'flatstone-solutions-us-east-2', 
+            'us-east-2',
+            'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
+        )
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Check that put_bucket_policy was called with the correct arguments
+        mock_s3.put_bucket_policy.assert_called_once()
+        args, kwargs = mock_s3.put_bucket_policy.call_args
+        
+        # Check bucket name
+        self.assertEqual(kwargs['Bucket'], 'flatstone-solutions-us-east-2')
+        
+        # Check policy content
+        policy = json.loads(kwargs['Policy'])
+        self.assertEqual(policy['Version'], '2008-10-17')
+        self.assertEqual(policy['Id'], 'PolicyForCloudFrontPrivateContent')
+        self.assertEqual(len(policy['Statement']), 1)
+        
+        statement = policy['Statement'][0]
+        self.assertEqual(statement['Sid'], 'AllowCloudFrontServicePrincipal')
+        self.assertEqual(statement['Effect'], 'Allow')
+        self.assertEqual(statement['Principal']['Service'], 'cloudfront.amazonaws.com')
+        self.assertEqual(statement['Action'], 's3:GetObject')
+        self.assertEqual(statement['Resource'], 'arn:aws:s3:::flatstone-solutions-us-east-2/*')
+        self.assertEqual(
+            statement['Condition']['StringEquals']['AWS:SourceArn'],
+            'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
+        )
+        
+        # Reset mocks
+        mock_s3.reset_mock()
+        
+        # Test with existing policy that already has a CloudFront distribution
+        existing_policy = {
+            "Version": "2008-10-17",
+            "Id": "PolicyForCloudFrontPrivateContent",
+            "Statement": [
+                {
+                    "Sid": "AllowCloudFrontServicePrincipal",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "cloudfront.amazonaws.com"
+                    },
+                    "Action": "s3:GetObject",
+                    "Resource": "arn:aws:s3:::flatstone-solutions-us-east-2/*",
+                    "Condition": {
+                        "StringEquals": {
+                            "AWS:SourceArn": "arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ"
+                        }
+                    }
+                }
+            ]
+        }
+        mock_s3.get_bucket_policy.side_effect = None
+        mock_s3.get_bucket_policy.return_value = {'Policy': json.dumps(existing_policy)}
+        
+        # Test with a second CloudFront distribution
+        result = aws_infra_report.attach_bucket_policy(
+            'flatstone-solutions-us-east-2', 
+            'us-east-2',
+            'arn:aws:cloudfront::851002115632:distribution/ABCDEFGHIJKLM'
+        )
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Check that put_bucket_policy was called with the correct arguments
+        mock_s3.put_bucket_policy.assert_called_once()
+        args, kwargs = mock_s3.put_bucket_policy.call_args
+        
+        # Check bucket name
+        self.assertEqual(kwargs['Bucket'], 'flatstone-solutions-us-east-2')
+        
+        # Check policy content
+        policy = json.loads(kwargs['Policy'])
+        self.assertEqual(policy['Version'], '2008-10-17')
+        self.assertEqual(policy['Id'], 'PolicyForCloudFrontPrivateContent')
+        self.assertEqual(len(policy['Statement']), 1)
+        
+        statement = policy['Statement'][0]
+        self.assertEqual(statement['Sid'], 'AllowCloudFrontServicePrincipal')
+        self.assertEqual(statement['Effect'], 'Allow')
+        self.assertEqual(statement['Principal']['Service'], 'cloudfront.amazonaws.com')
+        self.assertEqual(statement['Action'], 's3:GetObject')
+        self.assertEqual(statement['Resource'], 'arn:aws:s3:::flatstone-solutions-us-east-2/*')
+        
+        # Check that StringLike is used with a list of ARNs
+        self.assertIn('StringLike', statement['Condition'])
+        self.assertIn('AWS:SourceArn', statement['Condition']['StringLike'])
+        self.assertIsInstance(statement['Condition']['StringLike']['AWS:SourceArn'], list)
+        self.assertEqual(len(statement['Condition']['StringLike']['AWS:SourceArn']), 2)
+        self.assertIn('arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ', 
+                     statement['Condition']['StringLike']['AWS:SourceArn'])
+        self.assertIn('arn:aws:cloudfront::851002115632:distribution/ABCDEFGHIJKLM', 
+                     statement['Condition']['StringLike']['AWS:SourceArn'])
+        
+        # Reset mock and test auto-discovery of CloudFront distribution
+        mock_s3.reset_mock()
+        mock_s3.get_bucket_policy.side_effect = mock_s3.exceptions.NoSuchBucketPolicy({}, 'GetBucketPolicy')
+        
+        result = aws_infra_report.attach_bucket_policy('flatstone-solutions-us-east-2', 'us-east-2')
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Check that list_distributions was called
+        mock_cf.list_distributions.assert_called_once()
+        
+        # Check that put_bucket_policy was called with the correct arguments
+        mock_s3.put_bucket_policy.assert_called_once()
+        
+    @patch('aws_infra_report.attach_bucket_policy')
+    @patch('boto3.client')
+    @patch('aws_infra_report.parse_arguments')
+    @patch('aws_infra_report.load_config')
+    def test_main_with_attach_bucket_policy(self, mock_load_config, mock_parse_arguments, mock_boto_client, mock_attach_bucket_policy):
+        """Test main function with attach_bucket_policy option."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.attach_bucket_policy = True
+        mock_args.s3_bucket = 'test-bucket'
+        mock_args.region = 'us-west-2'
+        mock_args.cloudfront_distribution_id = 'E3V5CI7VI4S0QQ'
+        mock_args.deploy = None
+        mock_args.upload_resume = False
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = self.test_config
+        
+        # Mock CloudFront client
+        mock_cf = MagicMock()
+        mock_boto_client.return_value = mock_cf
+        
+        # Mock get_distribution response
+        mock_cf.get_distribution.return_value = {
+            'Distribution': {
+                'ARN': 'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
+            }
+        }
+        
+        # Mock attach_bucket_policy to return True (success)
+        mock_attach_bucket_policy.return_value = True
+        
+        # Test the function
+        with patch('sys.exit') as mock_exit:
+            aws_infra_report.main()
+            
+            # Check that attach_bucket_policy was called with the correct arguments
+            mock_attach_bucket_policy.assert_called_once_with(
+                'test-bucket', 
+                'us-west-2', 
+                'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
+            )
+            
+            # Check that sys.exit was not called (indicating success)
+            mock_exit.assert_not_called()
+
+
     @patch('aws_infra_report.upload_static_website')
     @patch('aws_infra_report.load_config')
     @patch('aws_infra_report.parse_arguments')
@@ -231,6 +620,8 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_args.upload_resume = True
         mock_args.s3_bucket = None
         mock_args.region = None
+        mock_args.deploy = None
+        mock_args.export_template = False
         mock_parse_arguments.return_value = mock_args
         
         # Mock config
@@ -249,8 +640,57 @@ class TestAWSInfraReport(unittest.TestCase):
             aws_infra_report.main()
         
         # Check that upload_static_website was called with the correct arguments
-        mock_upload_static_website.assert_called_once_with('test-bucket', 'us-west-2')
+        mock_upload_static_website.assert_called_once_with('test-bucket', 'us-west-2', self.test_config)
+        
+    @patch('aws_infra_report.deploy_cloudformation_template')
+    @patch('aws_infra_report.load_config')
+    @patch('aws_infra_report.parse_arguments')
+    def test_main_with_deploy(self, mock_parse_arguments, mock_load_config, mock_deploy_cloudformation):
+        """Test main function with deploy option."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.upload_resume = False
+        mock_args.region = 'us-west-2'
+        mock_args.deploy = 'static_website'
+        mock_args.stack_name = 'test-stack'
+        mock_args.export_template = True
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = self.test_config
+        
+        # Mock deploy function to return success
+        mock_deploy_cloudformation.return_value = {
+            'status': 'success',
+            'message': 'Stack create completed successfully!',
+            'outputs': {
+                'CloudFrontDistributionDomainName': 'test.cloudfront.net',
+                'S3BucketName': 'test-bucket-us-west-2'
+            }
+        }
+        
+        # Test the function
+        with patch('aws_infra_report.boto3.client'), \
+             patch('aws_infra_report.get_instance_details'), \
+             patch('aws_infra_report.get_spot_price'), \
+             patch('aws_infra_report.generate_report'), \
+             patch('aws_infra_report.save_report'), \
+             patch('aws_infra_report.display_report'):
+            aws_infra_report.main()
+        
+        # Check that deploy_cloudformation_template was called with the correct arguments
+        mock_deploy_cloudformation.assert_called_once_with(
+            'static_website', 'test-stack', 'us-west-2', self.test_config, True
+        )
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+
+
+
+
+

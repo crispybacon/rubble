@@ -1,7 +1,31 @@
+Parameters:
+  OrganizationTag:
+    Type: String
+    Description: Organization tag value
+    Default: "flatstone services"
+    
+  BusinessUnitTag:
+    Type: String
+    Description: Business unit tag value
+    Default: "marketing"
+    
+  EnvironmentTag:
+    Type: String
+    Description: Environment tag value
+    Default: "dev"
+
 Resources:
   NewEC2Instance:
-    Type: AWS::EC2::EC2Instance
+    Type: AWS::EC2::Instance
     Properties:
       ImageId: ami-086a54924e40cab98
       InstanceType: t2.micro
       #KeyName: None
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+

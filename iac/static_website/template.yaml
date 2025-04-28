@@ -15,9 +15,29 @@ Parameters:
     Description: Region for CloudFront Origin Shield
     Default: us-east-1
     
+  OrganizationTag:
+    Type: String
+    Description: Organization tag value
+    Default: "flatstone services"
+    
+  BusinessUnitTag:
+    Type: String
+    Description: Business unit tag value
+    Default: "marketing"
+    
+  EnvironmentTag:
+    Type: String
+    Description: Environment tag value
+    Default: "dev"
+    
 Metadata:
   AWSToolsMetrics:
     IaC_Generator: "arn:aws:cloudformation:us-east-1:851002115632:generatedTemplate/3b1cbe7b-0762-44af-9389-1fb001c49bdd"
+
+Conditions:
+  # CloudFront WAF can only be created in us-east-1
+  # This condition checks if we're deploying in us-east-1
+  IsUsEast1Region: !Equals [!Ref AwsRegion, "us-east-1"]
 
 Resources:
   LogsLogStreamCloudFrontE1QQL1YZZEFP31:
@@ -28,6 +48,7 @@ Resources:
       LogStreamName: "CloudFront_E1QQL1YZZEFP31"
       LogGroupName:
         Ref: "LogsLogGroupFlatstonesolutions"
+    # Note: LogStream doesn't support tags directly
 
   CloudFrontDistribution:
     UpdateReplacePolicy: "Retain"
@@ -62,7 +83,6 @@ Resources:
             Fn::Sub: "${BucketNamePrefix}-${AwsRegion}.s3.${AwsRegion}.amazonaws.com"
         ViewerCertificate:
           MinimumProtocolVersion: "TLSv1"
-          SslSupportMethod: "vip"
           CloudFrontDefaultCertificate: true
         PriceClass: "PriceClass_100"
         DefaultCacheBehavior:
@@ -95,16 +115,23 @@ Resources:
         Enabled: true
         Aliases: []
         IPV6Enabled: true
-        WebACLId:
-          Fn::GetAtt:
-          - "WAFv2WebACLCLOUDFRONT"
-          - "Arn"
+        WebACLId: !If 
+          - IsUsEast1Region
+          - !GetAtt WAFv2WebACLCLOUDFRONT.Arn
+          - !Ref AWS::NoValue
         HttpVersion: "http2"
         Restrictions:
           GeoRestriction:
             Locations: []
             RestrictionType: "none"
         CacheBehaviors: []
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
 
   S3BucketFlatstonesolutionsuseast1:
     UpdateReplacePolicy: "Retain"
@@ -129,19 +156,44 @@ Resources:
           ServerSideEncryptionByDefault:
             SSEAlgorithm: "AES256"
       Tags:
-      - Value: "marketing"
-        Key: "business_unit"
-      - Value: "prod"
-        Key: "environment"
-      - Value: "flatstone services"
-        Key: "organization"
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+        
+  S3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: 
+        Ref: "S3BucketFlatstonesolutionsuseast1"
+      PolicyDocument:
+        Version: "2008-10-17"
+        Id: "PolicyForCloudFrontPrivateContent"
+        Statement:
+          - Sid: "AllowCloudFrontServicePrincipal"
+            Effect: "Allow"
+            Principal:
+              Service: "cloudfront.amazonaws.com"
+            Action: "s3:GetObject"
+            Resource: 
+              Fn::Sub: "arn:aws:s3:::${BucketNamePrefix}-${AwsRegion}/*"
+            Condition:
+              StringLike:
+                AWS:SourceArn: 
+                  Fn::Sub: "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+    # Note: BucketPolicy doesn't support tags directly
 
   WAFv2WebACLCLOUDFRONT:
+    # WAFv2 WebACL with CLOUDFRONT scope can only be created in us-east-1
+    # This resource will only be created when deploying in us-east-1
+    Condition: IsUsEast1Region
     UpdateReplacePolicy: "Retain"
     Type: "AWS::WAFv2::WebACL"
     DeletionPolicy: "Delete"
     Properties:
-      Description: ""
+      Description: "CloudFront WAF WebACL (only available in us-east-1)"
       DefaultAction:
         Allow: {}
       Scope: "CLOUDFRONT"
@@ -198,7 +250,14 @@ Resources:
         SampledRequestsEnabled: true
         MetricName: "CreatedByCloudFront-d5158f38"
         CloudWatchMetricsEnabled: true
-      Name: "CreatedByCloudFront-d5158f38"
+      Name: !Sub "CreatedByCloudFront-${AWS::StackName}"
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
 
   CloudFrontOriginAccessControl:
     UpdateReplacePolicy: "Retain"
@@ -212,6 +271,7 @@ Resources:
         OriginAccessControlOriginType: "s3"
         Name:
           Fn::Sub: "${BucketNamePrefix}-${AwsRegion}.s3.${AwsRegion}.amazonaws.com"
+    # Note: OriginAccessControl doesn't support tags directly
 
   CloudFrontCachePolicy:
     UpdateReplacePolicy: "Retain"
@@ -233,6 +293,7 @@ Resources:
           EnableAcceptEncodingGzip: true
         DefaultTTL: 86400
         Name: "Custom-CachingOptimized"
+    # Note: CachePolicy doesn't support tags directly
 
   LogsLogGroupFlatstonesolutions:
     UpdateReplacePolicy: "Retain"
@@ -244,11 +305,65 @@ Resources:
       RetentionInDays: 365
       LogGroupName: "flatstone_solutions"
       Tags:
-      - Value: "marketing"
-        Key: "business_unit"
-      - Value: "prod"
-        Key: "environment"
-      - Value: "flatsone services"
-        Key: "organization"
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
       DataProtectionPolicy: {}
 
+  RegionalWebACL:
+    # This regional WAF WebACL is created in all regions
+    # It can be used for regional resources like ALBs or API Gateway
+    Type: "AWS::WAFv2::WebACL"
+    Properties:
+      Description: "Regional WAF WebACL for protecting regional resources"
+      DefaultAction:
+        Allow: {}
+      Scope: "REGIONAL"
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        MetricName: "RegionalWebACL"
+        CloudWatchMetricsEnabled: true
+      Name: !Sub "RegionalWebACL-${AWS::StackName}"
+      Rules:
+      - OverrideAction:
+          None: {}
+        RuleLabels: []
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          MetricName: "AWS-AWSManagedRulesCommonRuleSet"
+          CloudWatchMetricsEnabled: true
+        Priority: 0
+        Statement:
+          ManagedRuleGroupStatement:
+            ManagedRuleGroupConfigs: []
+            VendorName: "AWS"
+            RuleActionOverrides: []
+            ExcludedRules: []
+            Name: "AWSManagedRulesCommonRuleSet"
+        Name: "AWS-AWSManagedRulesCommonRuleSet"
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+
+Outputs:
+  CloudFrontDistributionDomainName:
+    Description: "Domain name of the CloudFront distribution"
+    Value:
+      Fn::GetAtt:
+      - "CloudFrontDistribution"
+      - "DomainName"
+  CloudFrontDistributionId:
+    Description: "ID of the CloudFront distribution"
+    Value:
+      Ref: "CloudFrontDistribution"
+  S3BucketName:
+    Description: "Name of the S3 bucket hosting the static website content"
+    Value:
+      Ref: "S3BucketFlatstonesolutionsuseast1"

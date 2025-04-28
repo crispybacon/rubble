@@ -326,7 +326,48 @@
             Solution Demonstrations
           </h2>
           <ul>
-            <!-- No solutions listed yet as per requirements -->
+            <li>
+              <div class="jobPosition">
+                <span class="bolded">
+                  Static Website
+                </span>
+                <span>
+                  AWS CloudFormation
+                </span>
+              </div>
+              <div class="job-content">
+                <div class="projectName bolded">
+                  <span>
+                    Professional Resume/Portfolio Website
+                  </span>
+                </div>
+                <div class="smallText">
+                  <p>
+                    A responsive static website hosted on AWS S3 and delivered globally via CloudFront with WAF protection.
+                  </p>
+                  <ul>
+                    <li>
+                      <p>
+                        Deployed using CloudFormation for infrastructure as code
+                      </p>
+                    </li>
+                    <li>
+                      <p>
+                        Features responsive design with collapsible sections
+                      </p>
+                    </li>
+                    <li>
+                      <p>
+                        Protected by AWS WAF with managed rule sets
+                      </p>
+                    </li>
+                  </ul>
+                  <p>
+                    <span class="bolded">Technologies: </span>AWS S3, CloudFront, WAF, CloudWatch Logs, HTML/CSS/JavaScript
+                  </p>
+                </div>
+              </div>
+            </li>
           </ul>
         </div>
       </div>
@@ -445,10 +486,40 @@
           }
         });
       });
+      
+      // Collapsible solution demonstrations functionality
+      const solutionDemoItems = document.querySelectorAll('.solutionDemos > ul > li');
+      
+      // Initialize all items as collapsed by default
+      solutionDemoItems.forEach(item => {
+        const jobContent = item.querySelector('.job-content');
+        // Add collapsed class by default
+        jobContent.classList.add('collapsed');
+        // Set initial padding
+        item.style.paddingBottom = '0.2cm';
+        
+        // Add click event to the job position (title)
+        const jobPosition = item.querySelector('.jobPosition');
+        jobPosition.addEventListener('click', function(e) {
+          e.stopPropagation(); // Prevent event bubbling
+          
+          // Toggle the collapsed class
+          jobContent.classList.toggle('collapsed');
+          
+          // Update the cursor style based on state
+          if (jobContent.classList.contains('collapsed')) {
+            item.style.paddingBottom = '0.2cm';
+          } else {
+            item.style.paddingBottom = '0.5cm';
+          }
+        });
+      });
     });
   </script>
 </body>
 </html>
+
+
 
 
 

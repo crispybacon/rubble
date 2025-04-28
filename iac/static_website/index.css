@@ -333,6 +333,7 @@ page[size="A4"] {
   margin: 0;
   padding-bottom: 0.5cm;
   padding-left: 0.5cm;
+  cursor: pointer;
 }
 
 .solutionDemos>ul>li:before {
@@ -355,6 +356,26 @@ page[size="A4"] {
   top: 0;
   width: 0.35cm;
   height: 0.35cm;
+}
+
+/* Collapsible content styling for Solution Demonstrations */
+.solutionDemos .job-content {
+  max-height: 1000px;
+  overflow: hidden;
+  transition: max-height 0.3s ease-in-out;
+}
+
+.solutionDemos .job-content.collapsed {
+  max-height: 0;
+}
+
+/* Job title hover effect for Solution Demonstrations */
+.solutionDemos .jobPosition .bolded {
+  transition: color 0.3s ease;
+}
+
+.solutionDemos .jobPosition .bolded:hover {
+  color: #FF8C00;
 }
 
 .jobPosition {
@@ -381,6 +402,8 @@ page[size="A4"] {
   list-style-type: disc;
 }
 /*End Layout*/
+
+
 
 
 

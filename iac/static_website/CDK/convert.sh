@@ -1,0 +1,1 @@
+cdk migrate --stack-name flatstone-resume-stack --from-path ./flatstone-resume-stack-1745789751278.yaml --language typescript
