@@ -14,6 +14,7 @@ from pathlib import Path
 # Add parent directory to path to import the main script
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aws_infra_report
+from deploy_function import attach_bucket_policy, export_deployed_template, load_cloudformation_yaml
 
 
 class TestAWSInfraReport(unittest.TestCase):
@@ -363,206 +364,9 @@ class TestAWSInfraReport(unittest.TestCase):
         self.assertEqual(param_dict['BusinessUnitTag'], 'marketing')
         self.assertEqual(param_dict['EnvironmentTag'], 'dev')
         
-    @patch('boto3.client')
-    @patch('aws_infra_report.load_config')
-    def test_export_deployed_template(self, mock_load_config, mock_boto_client):
-        """Test exporting a deployed CloudFormation template."""
-        # Mock configuration
-        mock_load_config.return_value = {
-            'solutions': {
-                'static_website': {
-                    'deployed_dir': 'iac/deployed'
-                }
-            }
-        }
+
         
-        # Mock CloudFormation client
-        mock_cfn = MagicMock()
-        mock_boto_client.return_value = mock_cfn
-        
-        # Mock get_template response
-        mock_cfn.get_template.return_value = {
-            'TemplateBody': 'test template content'
-        }
-        
-        # Mock file operations
-        with patch('builtins.open', unittest.mock.mock_open()) as mock_open:
-            with patch('pathlib.Path.mkdir'):
-                # Test the function
-                result = aws_infra_report.export_deployed_template(
-                    'static_website', 'test-stack', 'us-west-2', 
-                    mock_load_config.return_value
-                )
-        
-        # Check the result
-        self.assertTrue(result)
-        
-        # Verify CloudFormation client was called correctly
-        mock_boto_client.assert_called_with('cloudformation', region_name='us-west-2')
-        mock_cfn.get_template.assert_called_with(
-            StackName='test-stack',
-            TemplateStage='Original'
-        )
-        
-        # Verify file was written
-        mock_open.assert_called_once()
-        mock_open().write.assert_called_once_with('test template content')
-        
-    @patch('boto3.client')
-    def test_attach_bucket_policy(self, mock_boto_client):
-        """Test attaching a bucket policy to an S3 bucket."""
-        # Mock S3 client
-        mock_s3 = MagicMock()
-        mock_cf = MagicMock()
-        
-        # Configure the mock to return different clients based on service name
-        def get_client(service_name, region_name):
-            if service_name == 's3':
-                return mock_s3
-            elif service_name == 'cloudfront':
-                return mock_cf
-            return MagicMock()
-            
-        mock_boto_client.side_effect = get_client
-        
-        # Mock CloudFront list_distributions response
-        mock_cf.list_distributions.return_value = {
-            'DistributionList': {
-                'Items': [
-                    {
-                        'Id': 'E3V5CI7VI4S0QQ',
-                        'ARN': 'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ',
-                        'Origins': {
-                            'Items': [
-                                {
-                                    'DomainName': 'flatstone-solutions-us-east-2.s3.us-east-2.amazonaws.com'
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
-        }
-        
-        # Test with provided CloudFront ARN and no existing policy
-        mock_s3.get_bucket_policy.side_effect = mock_s3.exceptions.NoSuchBucketPolicy({}, 'GetBucketPolicy')
-        
-        result = aws_infra_report.attach_bucket_policy(
-            'flatstone-solutions-us-east-2', 
-            'us-east-2',
-            'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
-        )
-        
-        # Check that the function returned True (success)
-        self.assertTrue(result)
-        
-        # Check that put_bucket_policy was called with the correct arguments
-        mock_s3.put_bucket_policy.assert_called_once()
-        args, kwargs = mock_s3.put_bucket_policy.call_args
-        
-        # Check bucket name
-        self.assertEqual(kwargs['Bucket'], 'flatstone-solutions-us-east-2')
-        
-        # Check policy content
-        policy = json.loads(kwargs['Policy'])
-        self.assertEqual(policy['Version'], '2008-10-17')
-        self.assertEqual(policy['Id'], 'PolicyForCloudFrontPrivateContent')
-        self.assertEqual(len(policy['Statement']), 1)
-        
-        statement = policy['Statement'][0]
-        self.assertEqual(statement['Sid'], 'AllowCloudFrontServicePrincipal')
-        self.assertEqual(statement['Effect'], 'Allow')
-        self.assertEqual(statement['Principal']['Service'], 'cloudfront.amazonaws.com')
-        self.assertEqual(statement['Action'], 's3:GetObject')
-        self.assertEqual(statement['Resource'], 'arn:aws:s3:::flatstone-solutions-us-east-2/*')
-        self.assertEqual(
-            statement['Condition']['StringEquals']['AWS:SourceArn'],
-            'arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ'
-        )
-        
-        # Reset mocks
-        mock_s3.reset_mock()
-        
-        # Test with existing policy that already has a CloudFront distribution
-        existing_policy = {
-            "Version": "2008-10-17",
-            "Id": "PolicyForCloudFrontPrivateContent",
-            "Statement": [
-                {
-                    "Sid": "AllowCloudFrontServicePrincipal",
-                    "Effect": "Allow",
-                    "Principal": {
-                        "Service": "cloudfront.amazonaws.com"
-                    },
-                    "Action": "s3:GetObject",
-                    "Resource": "arn:aws:s3:::flatstone-solutions-us-east-2/*",
-                    "Condition": {
-                        "StringEquals": {
-                            "AWS:SourceArn": "arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ"
-                        }
-                    }
-                }
-            ]
-        }
-        mock_s3.get_bucket_policy.side_effect = None
-        mock_s3.get_bucket_policy.return_value = {'Policy': json.dumps(existing_policy)}
-        
-        # Test with a second CloudFront distribution
-        result = aws_infra_report.attach_bucket_policy(
-            'flatstone-solutions-us-east-2', 
-            'us-east-2',
-            'arn:aws:cloudfront::851002115632:distribution/ABCDEFGHIJKLM'
-        )
-        
-        # Check that the function returned True (success)
-        self.assertTrue(result)
-        
-        # Check that put_bucket_policy was called with the correct arguments
-        mock_s3.put_bucket_policy.assert_called_once()
-        args, kwargs = mock_s3.put_bucket_policy.call_args
-        
-        # Check bucket name
-        self.assertEqual(kwargs['Bucket'], 'flatstone-solutions-us-east-2')
-        
-        # Check policy content
-        policy = json.loads(kwargs['Policy'])
-        self.assertEqual(policy['Version'], '2008-10-17')
-        self.assertEqual(policy['Id'], 'PolicyForCloudFrontPrivateContent')
-        self.assertEqual(len(policy['Statement']), 1)
-        
-        statement = policy['Statement'][0]
-        self.assertEqual(statement['Sid'], 'AllowCloudFrontServicePrincipal')
-        self.assertEqual(statement['Effect'], 'Allow')
-        self.assertEqual(statement['Principal']['Service'], 'cloudfront.amazonaws.com')
-        self.assertEqual(statement['Action'], 's3:GetObject')
-        self.assertEqual(statement['Resource'], 'arn:aws:s3:::flatstone-solutions-us-east-2/*')
-        
-        # Check that StringLike is used with a list of ARNs
-        self.assertIn('StringLike', statement['Condition'])
-        self.assertIn('AWS:SourceArn', statement['Condition']['StringLike'])
-        self.assertIsInstance(statement['Condition']['StringLike']['AWS:SourceArn'], list)
-        self.assertEqual(len(statement['Condition']['StringLike']['AWS:SourceArn']), 2)
-        self.assertIn('arn:aws:cloudfront::851002115632:distribution/E3V5CI7VI4S0QQ', 
-                     statement['Condition']['StringLike']['AWS:SourceArn'])
-        self.assertIn('arn:aws:cloudfront::851002115632:distribution/ABCDEFGHIJKLM', 
-                     statement['Condition']['StringLike']['AWS:SourceArn'])
-        
-        # Reset mock and test auto-discovery of CloudFront distribution
-        mock_s3.reset_mock()
-        mock_s3.get_bucket_policy.side_effect = mock_s3.exceptions.NoSuchBucketPolicy({}, 'GetBucketPolicy')
-        
-        result = aws_infra_report.attach_bucket_policy('flatstone-solutions-us-east-2', 'us-east-2')
-        
-        # Check that the function returned True (success)
-        self.assertTrue(result)
-        
-        # Check that list_distributions was called
-        mock_cf.list_distributions.assert_called_once()
-        
-        # Check that put_bucket_policy was called with the correct arguments
-        mock_s3.put_bucket_policy.assert_called_once()
-        
-    @patch('aws_infra_report.attach_bucket_policy')
+    @patch('deploy_function.attach_bucket_policy')
     @patch('boto3.client')
     @patch('aws_infra_report.parse_arguments')
     @patch('aws_infra_report.load_config')
@@ -670,7 +474,8 @@ class TestAWSInfraReport(unittest.TestCase):
             's3': {'bucket': 'test-bucket'},
             'solutions': {
                 'messaging': {
-                    'template_path': 'iac/messaging/template.yaml'
+                    'template_path': 'iac/messaging/template.yaml',
+                    'parameters': None  # Test with None parameters
                 }
             }
         }

@@ -16,6 +16,7 @@ import yaml
 import shutil
 from datetime import datetime
 from pathlib import Path
+from deploy_function import deploy_cloudformation_template, attach_bucket_policy, export_deployed_template
 
 
 def parse_arguments():
@@ -95,245 +96,10 @@ def get_spot_price(ec2, instance_id):
         return None
 
 
-def export_deployed_template(solution_name, stack_name, region, config):
-    """
-    Export a deployed CloudFormation template to the deployed directory.
-    
-    Args:
-        solution_name: Name of the solution
-        stack_name: Name of the CloudFormation stack
-        region: AWS region
-        config: Configuration dictionary
-        
-    Returns:
-        bool: True if export was successful, False otherwise
-    """
-    try:
-        # Get the deployed directory from config
-        solution_config = config['solutions'][solution_name]
-        deployed_dir = solution_config.get('deployed_dir', 'iac/deployed')
-        
-        # Create the deployed directory if it doesn't exist
-        Path(deployed_dir).mkdir(exist_ok=True, parents=True)
-        
-        # Initialize CloudFormation client
-        cfn = boto3.client('cloudformation', region_name=region)
-        
-        # Get the template body
-        response = cfn.get_template(
-            StackName=stack_name,
-            TemplateStage='Original'
-        )
-        
-        template_body = response['TemplateBody']
-        
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{solution_name}_{stack_name}_{timestamp}.yaml"
-        filepath = os.path.join(deployed_dir, filename)
-        
-        # Write template to file
-        if isinstance(template_body, dict):
-            with open(filepath, 'w') as f:
-                yaml.dump(template_body, f, default_flow_style=False)
-        else:
-            with open(filepath, 'w') as f:
-                f.write(template_body)
-        
-        print(f"Exported deployed template to: {filepath}")
-        return True
-    
-    except Exception as e:
-        print(f"Error exporting deployed template: {e}")
-        return False
 
 
-def attach_bucket_policy(bucket_name, region, cloudfront_distribution_arn=None):
-    """
-    Attach a bucket policy to allow CloudFront to access the S3 bucket.
-    If a policy already exists, it will be updated to include the new CloudFront distribution
-    while preserving existing permissions.
-    
-    Args:
-        bucket_name: Name of the S3 bucket
-        region: AWS region
-        cloudfront_distribution_arn: ARN of the CloudFront distribution (if None, will be fetched)
-        
-    Returns:
-        bool: True if policy was attached successfully, False otherwise
-    """
-    try:
-        # Initialize S3 client
-        s3 = boto3.client('s3', region_name=region)
-        
-        # If CloudFront distribution ARN is not provided, try to fetch it
-        if not cloudfront_distribution_arn:
-            # Initialize CloudFront client
-            cf = boto3.client('cloudfront', region_name=region)
-            
-            # List distributions to find one that matches our bucket
-            response = cf.list_distributions()
-            
-            if 'DistributionList' in response and 'Items' in response['DistributionList']:
-                for distribution in response['DistributionList']['Items']:
-                    # Check if this distribution has our bucket as an origin
-                    for origin in distribution.get('Origins', {}).get('Items', []):
-                        if bucket_name in origin.get('DomainName', ''):
-                            cloudfront_distribution_arn = distribution['ARN']
-                            print(f"Found CloudFront distribution ARN: {cloudfront_distribution_arn}")
-                            break
-                    
-                    if cloudfront_distribution_arn:
-                        break
-        
-        # If we still don't have a CloudFront distribution ARN, we can't proceed
-        if not cloudfront_distribution_arn:
-            print(f"Error: Could not find CloudFront distribution for bucket {bucket_name}")
-            return False
-        
-        # Check if a bucket policy already exists
-        existing_policy = None
-        try:
-            response = s3.get_bucket_policy(Bucket=bucket_name)
-            if 'Policy' in response:
-                existing_policy = json.loads(response['Policy'])
-                print(f"Found existing bucket policy for {bucket_name}")
-        except s3.exceptions.NoSuchBucketPolicy:
-            print(f"No existing bucket policy found for {bucket_name}")
-        except Exception as e:
-            print(f"Error retrieving bucket policy: {e}")
-        
-        # If there's an existing policy, check if we need to update it
-        if existing_policy:
-            # Check if this CloudFront distribution is already in the policy
-            cloudfront_already_in_policy = False
-            cloudfront_statement_index = -1
-            
-            for i, statement in enumerate(existing_policy.get('Statement', [])):
-                # Look for CloudFront service principal statements
-                if (statement.get('Principal', {}).get('Service') == 'cloudfront.amazonaws.com' and
-                    statement.get('Action') == 's3:GetObject' and
-                    statement.get('Resource') == f"arn:aws:s3:::{bucket_name}/*"):
-                    
-                    cloudfront_statement_index = i
-                    
-                    # Check if this specific CloudFront ARN is already in the condition
-                    condition = statement.get('Condition', {})
-                    string_equals = condition.get('StringEquals', {})
-                    source_arn = string_equals.get('AWS:SourceArn')
-                    
-                    if source_arn == cloudfront_distribution_arn:
-                        cloudfront_already_in_policy = True
-                        print(f"CloudFront distribution {cloudfront_distribution_arn} already in bucket policy")
-                        break
-                    
-                    # Check if the condition is using StringLike with a list of ARNs
-                    string_like = condition.get('StringLike', {})
-                    source_arns = string_like.get('AWS:SourceArn', [])
-                    
-                    if isinstance(source_arns, list) and cloudfront_distribution_arn in source_arns:
-                        cloudfront_already_in_policy = True
-                        print(f"CloudFront distribution {cloudfront_distribution_arn} already in bucket policy")
-                        break
-            
-            # If the CloudFront distribution is not in the policy, add it
-            if not cloudfront_already_in_policy:
-                if cloudfront_statement_index >= 0:
-                    # Update existing CloudFront statement to use StringLike with a list of ARNs
-                    statement = existing_policy['Statement'][cloudfront_statement_index]
-                    
-                    # Get the current ARN(s)
-                    current_arns = []
-                    if 'Condition' in statement:
-                        if 'StringEquals' in statement['Condition'] and 'AWS:SourceArn' in statement['Condition']['StringEquals']:
-                            current_arns.append(statement['Condition']['StringEquals']['AWS:SourceArn'])
-                            # Remove the StringEquals condition
-                            del statement['Condition']['StringEquals']
-                        elif 'StringLike' in statement['Condition'] and 'AWS:SourceArn' in statement['Condition']['StringLike']:
-                            if isinstance(statement['Condition']['StringLike']['AWS:SourceArn'], list):
-                                current_arns.extend(statement['Condition']['StringLike']['AWS:SourceArn'])
-                            else:
-                                current_arns.append(statement['Condition']['StringLike']['AWS:SourceArn'])
-                    
-                    # Add the new ARN
-                    if cloudfront_distribution_arn not in current_arns:
-                        current_arns.append(cloudfront_distribution_arn)
-                    
-                    # Update the condition to use StringLike with the list of ARNs
-                    if 'Condition' not in statement:
-                        statement['Condition'] = {}
-                    
-                    statement['Condition']['StringLike'] = {
-                        'AWS:SourceArn': current_arns
-                    }
-                    
-                    print(f"Updated bucket policy to include CloudFront distribution {cloudfront_distribution_arn}")
-                else:
-                    # Add a new statement for this CloudFront distribution
-                    new_statement = {
-                        "Sid": "AllowCloudFrontServicePrincipal",
-                        "Effect": "Allow",
-                        "Principal": {
-                            "Service": "cloudfront.amazonaws.com"
-                        },
-                        "Action": "s3:GetObject",
-                        "Resource": f"arn:aws:s3:::{bucket_name}/*",
-                        "Condition": {
-                            "StringEquals": {
-                                "AWS:SourceArn": cloudfront_distribution_arn
-                            }
-                        }
-                    }
-                    existing_policy['Statement'].append(new_statement)
-                    print(f"Added new statement for CloudFront distribution {cloudfront_distribution_arn}")
-                
-                # Update the bucket policy
-                bucket_policy_json = json.dumps(existing_policy)
-                s3.put_bucket_policy(
-                    Bucket=bucket_name,
-                    Policy=bucket_policy_json
-                )
-                print(f"Successfully updated bucket policy for {bucket_name}")
-            
-            return True
-        else:
-            # Create a new bucket policy
-            bucket_policy = {
-                "Version": "2008-10-17",
-                "Id": "PolicyForCloudFrontPrivateContent",
-                "Statement": [
-                    {
-                        "Sid": "AllowCloudFrontServicePrincipal",
-                        "Effect": "Allow",
-                        "Principal": {
-                            "Service": "cloudfront.amazonaws.com"
-                        },
-                        "Action": "s3:GetObject",
-                        "Resource": f"arn:aws:s3:::{bucket_name}/*",
-                        "Condition": {
-                            "StringEquals": {
-                                "AWS:SourceArn": cloudfront_distribution_arn
-                            }
-                        }
-                    }
-                ]
-            }
-            
-            # Convert policy to JSON string
-            bucket_policy_json = json.dumps(bucket_policy)
-            
-            # Attach the policy to the bucket
-            s3.put_bucket_policy(
-                Bucket=bucket_name,
-                Policy=bucket_policy_json
-            )
-            
-            print(f"Successfully attached new bucket policy to {bucket_name}")
-            return True
-    
-    except Exception as e:
-        print(f"Error attaching bucket policy: {e}")
-        return False
+
+
 
 
 def get_instance_details(ec2, instance_id, config=None):
@@ -626,7 +392,7 @@ def main():
                 config['solutions'] = {}
             if 'messaging' not in config['solutions']:
                 config['solutions']['messaging'] = {}
-            if 'parameters' not in config['solutions']['messaging']:
+            if 'parameters' not in config['solutions']['messaging'] or config['solutions']['messaging']['parameters'] is None:
                 config['solutions']['messaging']['parameters'] = {}
             config['solutions']['messaging']['parameters']['StaticWebsiteStackName'] = args.static_website_stack
         

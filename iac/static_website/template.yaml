@@ -382,6 +382,33 @@ Resources:
       RestApiId: !Ref ContactFormApi
       Description: "Production deployment for contact form API"
 
+  # IAM Role for API Gateway CloudWatch Logs
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+
+  # Configure API Gateway Account settings for CloudWatch Logs
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+
   ApiGatewayStage:
     Type: AWS::ApiGateway::Stage
     Properties:
@@ -394,6 +421,10 @@ Resources:
       AccessLogSetting:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
         Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "caller":"$context.identity.caller", "user":"$context.identity.user", "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod", "resourcePath":"$context.resourcePath", "status":"$context.status", "protocol":"$context.protocol", "responseLength":"$context.responseLength" }'
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
 
   ApiGatewayLogGroup:
     Type: AWS::Logs::LogGroup

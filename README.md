@@ -2,6 +2,17 @@
 
 A Python tool for generating reports about deployed AWS infrastructure, with a focus on cost analysis. The tool also provides functionality to deploy and manage various AWS solutions.
 
+## Recent Fixes
+
+### AwsRegion Parameter Fix
+
+Fixed an issue where the deployment would fail with the error:
+```
+Error deploying CloudFormation template: An error occurred (ValidationError) when calling the CreateStack operation: Parameters: [AwsRegion] do not exist in the template
+```
+
+The fix ensures that the `AwsRegion` parameter is only added to CloudFormation templates that actually define this parameter. Previously, the code was unconditionally adding this parameter to all templates, causing validation errors for templates that didn't include it.
+
 ## Features
 
 - Scan AWS resources in specified regions
