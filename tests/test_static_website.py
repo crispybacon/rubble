@@ -106,88 +106,96 @@ class TestStaticWebsite(unittest.TestCase):
         
         # Both sections should use the same hover color
         self.assertEqual(work_exp_hover_rule.group(1), solution_hover_rule.group(1))
+
+    def test_required_parameters_exist(self):
+        """Test that all required parameters exist in the template."""
+        # Check that the required parameters exist
+        required_params = [
+            'BucketNamePrefix', 'OriginShieldRegion'
+        ]
         
-    def test_cloudfront_cache_policy_name(self):
-        """Test that the CloudFront CachePolicy name doesn't use the reserved 'Managed-' prefix."""
-        # Find the CloudFrontCachePolicy resource
-        self.assertIn('CloudFrontCachePolicy', self.template_content['Resources'])
-        
-        # Get the CachePolicyConfig
-        cache_policy_config = self.template_content['Resources']['CloudFrontCachePolicy']['Properties']['CachePolicyConfig']
-        
-        # Check that the name doesn't start with 'Managed-'
-        self.assertIn('Name', cache_policy_config)
-        self.assertFalse(cache_policy_config['Name'].startswith('Managed-'), 
-                         f"CachePolicy name '{cache_policy_config['Name']}' should not start with 'Managed-' prefix")
-        
-        # Verify it uses the correct prefix
-        self.assertTrue(cache_policy_config['Name'].startswith('Custom-'), 
-                        f"CachePolicy name should start with 'Custom-' prefix")
-                        
-    def test_wafv2_webacl_configuration(self):
-        """Test that the WAFv2 WebACL is configured correctly for different regions."""
-        # Check that the condition for us-east-1 region exists
-        self.assertIn('Conditions', self.template_content)
-        self.assertIn('IsUsEast1Region', self.template_content['Conditions'])
-        
-        # Check that the CloudFront WAF is only created in us-east-1
-        self.assertIn('WAFv2WebACLCLOUDFRONT', self.template_content['Resources'])
-        self.assertIn('Condition', self.template_content['Resources']['WAFv2WebACLCLOUDFRONT'])
-        self.assertEqual(self.template_content['Resources']['WAFv2WebACLCLOUDFRONT']['Condition'], 'IsUsEast1Region')
-        
-        # Check that the CloudFront WAF has the correct scope
-        self.assertEqual(
-            self.template_content['Resources']['WAFv2WebACLCLOUDFRONT']['Properties']['Scope'], 
-            'CLOUDFRONT'
-        )
-        
-        # Check that the Regional WAF exists and is not conditional
-        self.assertIn('RegionalWebACL', self.template_content['Resources'])
-        self.assertNotIn('Condition', self.template_content['Resources']['RegionalWebACL'])
-        
-        # Check that the Regional WAF has the correct scope
-        self.assertEqual(
-            self.template_content['Resources']['RegionalWebACL']['Properties']['Scope'], 
-            'REGIONAL'
-        )
-        
-        # Check that the CloudFront distribution conditionally uses the WAF
-        cloudfront_resource = self.template_content['Resources']['CloudFrontDistribution']
-        self.assertIn('WebACLId', cloudfront_resource['Properties']['DistributionConfig'])
-        
-        # The WebACLId should be a conditional expression
-        webacl_id = cloudfront_resource['Properties']['DistributionConfig']['WebACLId']
-        self.assertIsInstance(webacl_id, dict)
-        self.assertIn('Fn::If', webacl_id) or self.assertIn('!If', webacl_id)
-        
-    def test_cloudfront_viewer_certificate_configuration(self):
-        """Test that the CloudFront ViewerCertificate is configured correctly."""
+        for param in required_params:
+            self.assertIn(param, self.template_content['Parameters'], 
+                         f"Required parameter '{param}' not found in template")
+            
+        # Check that BucketNamePrefix has the correct default
+        self.assertEqual(self.template_content['Parameters']['BucketNamePrefix']['Default'], 
+                         "flatstone-solutions", 
+                         "BucketNamePrefix should have default value 'flatstone-solutions'")
+                         
+        # Check that OriginShieldRegion has the correct default
+        self.assertEqual(self.template_content['Parameters']['OriginShieldRegion']['Default'], 
+                         "us-east-2", 
+                         "OriginShieldRegion should have default value 'us-east-2'")
+
+    def test_cloudfront_allowed_methods(self):
+        """Test that CloudFront allows GET and HEAD requests to the S3 bucket."""
         # Get the CloudFront distribution resource
         cloudfront_resource = self.template_content['Resources']['CloudFrontDistribution']
-        self.assertIn('ViewerCertificate', cloudfront_resource['Properties']['DistributionConfig'])
+        self.assertIn('DefaultCacheBehavior', cloudfront_resource['Properties']['DistributionConfig'])
         
-        viewer_certificate = cloudfront_resource['Properties']['DistributionConfig']['ViewerCertificate']
+        # Check that GET and HEAD are in AllowedMethods
+        default_behavior = cloudfront_resource['Properties']['DistributionConfig']['DefaultCacheBehavior']
+        self.assertIn('AllowedMethods', default_behavior)
+        self.assertEqual(len(default_behavior['AllowedMethods']), 2)
+        self.assertIn('GET', default_behavior['AllowedMethods'])
+        self.assertIn('HEAD', default_behavior['AllowedMethods'])
         
-        # Check that we have the CloudFrontDefaultCertificate property
-        self.assertIn('CloudFrontDefaultCertificate', viewer_certificate)
+        # Check that GET and HEAD are in CachedMethods
+        self.assertIn('CachedMethods', default_behavior)
+        self.assertEqual(len(default_behavior['CachedMethods']), 2)
+        self.assertIn('GET', default_behavior['CachedMethods'])
+        self.assertIn('HEAD', default_behavior['CachedMethods'])
         
-        # If CloudFrontDefaultCertificate is true, SslSupportMethod should not be present
-        if viewer_certificate['CloudFrontDefaultCertificate'] is True:
-            self.assertNotIn('SslSupportMethod', viewer_certificate, 
-                            "SslSupportMethod should not be present when CloudFrontDefaultCertificate is true")
-            self.assertNotIn('AcmCertificateArn', viewer_certificate,
-                            "AcmCertificateArn should not be present when CloudFrontDefaultCertificate is true")
-            self.assertNotIn('IamCertificateId', viewer_certificate,
-                            "IamCertificateId should not be present when CloudFrontDefaultCertificate is true")
-        # If CloudFrontDefaultCertificate is false, SslSupportMethod must be present along with a certificate
-        else:
-            self.assertIn('SslSupportMethod', viewer_certificate,
-                         "SslSupportMethod must be present when CloudFrontDefaultCertificate is false")
-            self.assertTrue(
-                'AcmCertificateArn' in viewer_certificate or 'IamCertificateId' in viewer_certificate,
-                "Either AcmCertificateArn or IamCertificateId must be present when CloudFrontDefaultCertificate is false"
-            )
-            
+    def test_cloudfront_origin_access_control(self):
+        """Test that CloudFront is configured with Origin Access Control."""
+        # Check that the CloudFrontOriginAccessControl resource exists
+        self.assertIn('CloudFrontOriginAccessControl', self.template_content['Resources'])
+        
+        # Check that it has the correct properties
+        oac = self.template_content['Resources']['CloudFrontOriginAccessControl']
+        self.assertEqual(oac['Type'], 'AWS::CloudFront::OriginAccessControl')
+        self.assertIn('OriginAccessControlConfig', oac['Properties'])
+        self.assertEqual(oac['Properties']['OriginAccessControlConfig']['OriginAccessControlOriginType'], 's3')
+        self.assertEqual(oac['Properties']['OriginAccessControlConfig']['SigningBehavior'], 'always')
+        self.assertEqual(oac['Properties']['OriginAccessControlConfig']['SigningProtocol'], 'sigv4')
+        
+        # Check that the CloudFront distribution uses the Origin Access Control
+        cloudfront_resource = self.template_content['Resources']['CloudFrontDistribution']
+        origins = cloudfront_resource['Properties']['DistributionConfig']['Origins']
+        self.assertEqual(len(origins), 1)
+        self.assertIn('OriginAccessControlId', origins[0])
+        # The OriginAccessControlId should reference the CloudFrontOriginAccessControl resource
+        self.assertIn('GetAtt', origins[0]['OriginAccessControlId'])
+
+    def test_s3_bucket_configuration(self):
+        """Test that the S3 bucket is configured correctly."""
+        # Check that the StaticWebsiteBucket resource exists
+        self.assertIn('StaticWebsiteBucket', self.template_content['Resources'])
+        
+        # Get the bucket configuration
+        bucket = self.template_content['Resources']['StaticWebsiteBucket']
+        self.assertEqual(bucket['Type'], 'AWS::S3::Bucket')
+        
+        # Check that the bucket has OwnershipControls configured to enforce bucket owner ownership
+        self.assertIn('OwnershipControls', bucket['Properties'])
+        self.assertIn('Rules', bucket['Properties']['OwnershipControls'])
+        self.assertEqual(bucket['Properties']['OwnershipControls']['Rules'][0]['ObjectOwnership'], 'BucketOwnerEnforced')
+        
+        # Check that the PublicAccessBlockConfiguration blocks all public access
+        self.assertIn('PublicAccessBlockConfiguration', bucket['Properties'])
+        self.assertEqual(bucket['Properties']['PublicAccessBlockConfiguration']['BlockPublicAcls'], True)
+        self.assertEqual(bucket['Properties']['PublicAccessBlockConfiguration']['IgnorePublicAcls'], True)
+        self.assertEqual(bucket['Properties']['PublicAccessBlockConfiguration']['BlockPublicPolicy'], True)
+        self.assertEqual(bucket['Properties']['PublicAccessBlockConfiguration']['RestrictPublicBuckets'], True)
+        
+        # Check that versioning is enabled
+        self.assertIn('VersioningConfiguration', bucket['Properties'])
+        self.assertEqual(bucket['Properties']['VersioningConfiguration']['Status'], 'Enabled')
+        
+        # Check that AccessControl is not set (as it's redundant with the public access block configuration)
+        self.assertNotIn('AccessControl', bucket['Properties'])
+        
     def test_s3_bucket_policy_configuration(self):
         """Test that the S3 bucket policy is configured correctly."""
         # Check that the S3BucketPolicy resource exists
@@ -200,7 +208,7 @@ class TestStaticWebsite(unittest.TestCase):
         # Check that the bucket policy references the S3 bucket
         self.assertIn('Bucket', bucket_policy['Properties'])
         self.assertIn('Ref', bucket_policy['Properties']['Bucket'])
-        self.assertEqual(bucket_policy['Properties']['Bucket']['Ref'], 'S3BucketFlatstonesolutionsuseast1')
+        self.assertEqual(bucket_policy['Properties']['Bucket']['Ref'], 'StaticWebsiteBucket')
         
         # Check that the policy document has the correct structure
         policy_doc = bucket_policy['Properties']['PolicyDocument']
@@ -208,19 +216,23 @@ class TestStaticWebsite(unittest.TestCase):
         self.assertEqual(policy_doc['Id'], 'PolicyForCloudFrontPrivateContent')
         
         # Check the statement
-        statement = policy_doc['Statement'][0]
-        self.assertEqual(statement['Sid'], 'AllowCloudFrontServicePrincipal')
-        self.assertEqual(statement['Effect'], 'Allow')
-        self.assertEqual(statement['Principal']['Service'], 'cloudfront.amazonaws.com')
-        self.assertEqual(statement['Action'], 's3:GetObject')
+        statements = policy_doc['Statement']
+        self.assertEqual(len(statements), 1, "Bucket policy should have one statement")
+        
+        # Check the statement for CloudFront access
+        get_statement = statements[0]
+        self.assertEqual(get_statement['Sid'], 'AllowCloudFrontServicePrincipal')
+        self.assertEqual(get_statement['Effect'], 'Allow')
+        self.assertEqual(get_statement['Principal']['Service'], 'cloudfront.amazonaws.com')
+        self.assertEqual(get_statement['Action'], 's3:GetObject')
         
         # Check the resource pattern
-        self.assertIn('Resource', statement)
+        self.assertIn('Resource', get_statement)
         
-        # Check the condition - should use StringLike to support multiple distributions
-        self.assertIn('Condition', statement)
-        self.assertIn('StringLike', statement['Condition'])
-        self.assertIn('AWS:SourceArn', statement['Condition']['StringLike'])
+        # Check the condition - should use StringEquals with specific distribution
+        self.assertIn('Condition', get_statement)
+        self.assertIn('StringEquals', get_statement['Condition'])
+        self.assertIn('AWS:SourceArn', get_statement['Condition']['StringEquals'])
         
     def test_cloudfront_distribution_id_output(self):
         """Test that the CloudFront distribution ID is included in the outputs."""
@@ -233,17 +245,42 @@ class TestStaticWebsite(unittest.TestCase):
         self.assertIn('Ref', output['Value'])
         self.assertEqual(output['Value']['Ref'], 'CloudFrontDistribution')
 
+    def test_no_waf_resources(self):
+        """Test that the template doesn't include WAF resources."""
+        # Check that WAF resources don't exist
+        self.assertNotIn('WAFv2WebACLCLOUDFRONT', self.template_content['Resources'],
+                        "WAFv2WebACLCLOUDFRONT should not exist in the template")
+        self.assertNotIn('RegionalWebACL', self.template_content['Resources'],
+                        "RegionalWebACL should not exist in the template")
+        
+    def test_no_cloudwatch_resources(self):
+        """Test that the template doesn't include CloudWatch resources."""
+        # Check that CloudWatch resources don't exist
+        self.assertNotIn('ApplicationLogGroup', self.template_content['Resources'],
+                        "ApplicationLogGroup should not exist in the template")
+        self.assertNotIn('StaticWebsiteDashboard', self.template_content['Resources'],
+                        "StaticWebsiteDashboard should not exist in the template")
+
+    def test_cloudfront_viewer_certificate_configuration(self):
+        """Test that the CloudFront ViewerCertificate is configured correctly."""
+        # Get the CloudFront distribution resource
+        cloudfront_resource = self.template_content['Resources']['CloudFrontDistribution']
+        self.assertIn('ViewerCertificate', cloudfront_resource['Properties']['DistributionConfig'])
+        
+        viewer_certificate = cloudfront_resource['Properties']['DistributionConfig']['ViewerCertificate']
+        
+        # Check that we have the CloudFrontDefaultCertificate property
+        self.assertIn('CloudFrontDefaultCertificate', viewer_certificate)
+        self.assertTrue(viewer_certificate['CloudFrontDefaultCertificate'], 
+                       "CloudFrontDefaultCertificate should be true")
+
+    def test_cloudfront_default_root_object(self):
+        """Test that CloudFront has index.html as the default root object."""
+        # Check that the CloudFront distribution has DefaultRootObject set to index.html
+        cloudfront_resource = self.template_content['Resources']['CloudFrontDistribution']
+        self.assertIn('DefaultRootObject', cloudfront_resource['Properties']['DistributionConfig'])
+        self.assertEqual(cloudfront_resource['Properties']['DistributionConfig']['DefaultRootObject'], 'index.html',
+                        "DefaultRootObject should be set to index.html")
+
 if __name__ == '__main__':
     unittest.main()
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for the AWS Infrastructure Report Tool
+Unit tests for the AWS Resource Manager
 """
 
 import unittest
@@ -13,12 +13,12 @@ from pathlib import Path
 
 # Add parent directory to path to import the main script
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import aws_infra_report
-from deploy_function import attach_bucket_policy, export_deployed_template, load_cloudformation_yaml
+import aws_resource_manager
+from deploy_function import attach_bucket_policy, export_deployed_template, load_cloudformation_yaml, update_stack_parameters
 
 
-class TestAWSInfraReport(unittest.TestCase):
-    """Test cases for AWS Infrastructure Report Tool."""
+class TestAWSResourceManager(unittest.TestCase):
+    """Test cases for AWS Resource Manager."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -53,23 +53,23 @@ class TestAWSInfraReport(unittest.TestCase):
         except:
             pass
 
-    @patch('aws_infra_report.load_config')
+    @patch('aws_resource_manager.load_config')
     def test_load_config(self, mock_load_config):
         """Test loading configuration from file."""
         mock_load_config.return_value = self.test_config
-        config = aws_infra_report.load_config('dummy_path')
+        config = aws_resource_manager.load_config('dummy_path')
         self.assertEqual(config['region'], 'us-west-2')
         self.assertEqual(config['output']['report_dir'], 'test_reports')
 
     def test_calculate_costs(self):
         """Test cost calculation function."""
         # Test with valid spot price
-        costs = aws_infra_report.calculate_costs(0.1234)
+        costs = aws_resource_manager.calculate_costs(0.1234)
         self.assertEqual(costs['hourly'], 0.1234)
         self.assertAlmostEqual(costs['monthly'], 90.06, places=2)
         
         # Test with None spot price
-        costs = aws_infra_report.calculate_costs(None)
+        costs = aws_resource_manager.calculate_costs(None)
         self.assertIsNone(costs['hourly'])
         self.assertIsNone(costs['monthly'])
 
@@ -97,12 +97,12 @@ class TestAWSInfraReport(unittest.TestCase):
         }
         
         # Test the function
-        spot_price = aws_infra_report.get_spot_price(mock_ec2, 'i-12345')
+        spot_price = aws_resource_manager.get_spot_price(mock_ec2, 'i-12345')
         self.assertEqual(spot_price, 0.0123)
         
         # Test with empty spot price history
         mock_ec2.describe_spot_price_history.return_value = {'SpotPriceHistory': []}
-        spot_price = aws_infra_report.get_spot_price(mock_ec2, 'i-12345')
+        spot_price = aws_resource_manager.get_spot_price(mock_ec2, 'i-12345')
         self.assertIsNone(spot_price)
         
     @patch('boto3.client')
@@ -130,7 +130,7 @@ class TestAWSInfraReport(unittest.TestCase):
         }
         
         # Test with existing tags
-        details = aws_infra_report.get_instance_details(mock_ec2, 'i-12345', self.test_config)
+        details = aws_resource_manager.get_instance_details(mock_ec2, 'i-12345', self.test_config)
         self.assertEqual(details['InstanceId'], 'i-12345')
         self.assertEqual(details['InstanceType'], 't2.micro')
         self.assertEqual(details['State'], 'running')
@@ -156,7 +156,7 @@ class TestAWSInfraReport(unittest.TestCase):
         }
         
         # Test without tags
-        details = aws_infra_report.get_instance_details(mock_ec2, 'i-67890', self.test_config)
+        details = aws_resource_manager.get_instance_details(mock_ec2, 'i-67890', self.test_config)
         self.assertEqual(details['InstanceId'], 'i-67890')
         self.assertEqual(details['InstanceType'], 't2.small')
         self.assertEqual(details['State'], 'stopped')
@@ -197,7 +197,7 @@ class TestAWSInfraReport(unittest.TestCase):
             }
         ]
         
-        report = aws_infra_report.generate_report('us-west-2', instances_data)
+        report = aws_resource_manager.generate_report('us-west-2', instances_data)
         
         self.assertEqual(report['region'], 'us-west-2')
         self.assertEqual(report['summary']['total_instances'], 3)
@@ -212,7 +212,7 @@ class TestAWSInfraReport(unittest.TestCase):
         report = {'test': 'data'}
         
         with patch('builtins.open', unittest.mock.mock_open()) as mock_open:
-            filepath = aws_infra_report.save_report(report, 'test_reports', 'test_report')
+            filepath = aws_resource_manager.save_report(report, 'test_reports', 'test_report')
             
             # Check that the file was opened for writing
             mock_open.assert_called_once()
@@ -266,19 +266,31 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_file4.name = 'cloudformation-template.yaml'
         mock_file4.__str__.return_value = 'iac/static_website/cloudformation-template.yaml'
         
-        mock_glob.return_value = [mock_file1, mock_file2, mock_file3, mock_file4]
+        # JavaScript file that should be skipped
+        mock_file5 = MagicMock()
+        mock_file5.suffix = '.js'
+        mock_file5.name = 'script.js'
+        mock_file5.__str__.return_value = 'iac/static_website/content/script.js'
+        
+        # HTML file that's not index.html should be skipped
+        mock_file6 = MagicMock()
+        mock_file6.suffix = '.html'
+        mock_file6.name = 'other.html'
+        mock_file6.__str__.return_value = 'iac/static_website/content/other.html'
+        
+        mock_glob.return_value = [mock_file1, mock_file2, mock_file3, mock_file4, mock_file5, mock_file6]
         mock_is_file.return_value = True
         
         # Mock relative_to to return the filename
         mock_relative_to.side_effect = lambda x: Path(str(mock_relative_to._mock_self).split('/')[-1])
         
         # Test the function
-        result = aws_infra_report.upload_static_website('test-bucket', 'us-west-2')
+        result = aws_resource_manager.upload_static_website('test-bucket', 'us-west-2')
         
         # Check that the function returned True (success)
         self.assertTrue(result)
         
-        # Check that put_object was called for each file except the CloudFormation template
+        # Check that put_object was called only for index.html, CSS, and image files
         self.assertEqual(mock_s3.put_object.call_count, 3)
         
         # Check content types were set correctly
@@ -287,13 +299,18 @@ class TestAWSInfraReport(unittest.TestCase):
         self.assertIn('text/css', content_types)
         self.assertIn('image/png', content_types)
         
-        # Check that files are uploaded to the root of the bucket (no static_website prefix)
-        keys = [call[1].get('Key') for call in mock_s3.put_object.call_args_list]
-        for key in keys:
-            self.assertFalse(key.startswith('static_website/'), f"Key '{key}' should not start with 'static_website/'")
+        # Check that the correct files were uploaded
+        uploaded_files = [call[1].get('Key') for call in mock_s3.put_object.call_args_list]
+        self.assertIn('static_website/index.html', uploaded_files)
+        self.assertIn('static_website/index.css', uploaded_files)
+        self.assertIn('static_website/me.png', uploaded_files)
+        
+        # Check that the other files were not uploaded
+        for file_key in ['static_website/cloudformation-template.yaml', 'static_website/script.js', 'static_website/other.html']:
+            self.assertNotIn(file_key, uploaded_files)
 
     @patch('boto3.client')
-    @patch('aws_infra_report.load_config')
+    @patch('aws_resource_manager.load_config')
     def test_deploy_cloudformation_template(self, mock_load_config, mock_boto_client):
         """Test deploying a CloudFormation template."""
         # Mock configuration
@@ -344,7 +361,7 @@ class TestAWSInfraReport(unittest.TestCase):
             with patch('pathlib.Path.exists', return_value=True):
                 with patch('pathlib.Path.mkdir'):
                     # Test the function
-                    result = aws_infra_report.deploy_cloudformation_template(
+                    result = aws_resource_manager.deploy_cloudformation_template(
                         'static_website', 'test-stack', 'us-west-2', 
                         mock_load_config.return_value, False
                     )
@@ -373,8 +390,8 @@ class TestAWSInfraReport(unittest.TestCase):
         
     @patch('deploy_function.attach_bucket_policy')
     @patch('boto3.client')
-    @patch('aws_infra_report.parse_arguments')
-    @patch('aws_infra_report.load_config')
+    @patch('aws_resource_manager.parse_arguments')
+    @patch('aws_resource_manager.load_config')
     def test_main_with_attach_bucket_policy(self, mock_load_config, mock_parse_arguments, mock_boto_client, mock_attach_bucket_policy):
         """Test main function with attach_bucket_policy option."""
         # Mock arguments
@@ -406,7 +423,7 @@ class TestAWSInfraReport(unittest.TestCase):
         
         # Test the function
         with patch('sys.exit') as mock_exit:
-            aws_infra_report.main()
+            aws_resource_manager.main()
             
             # Check that attach_bucket_policy was called with the correct arguments
             mock_attach_bucket_policy.assert_called_once_with(
@@ -419,9 +436,9 @@ class TestAWSInfraReport(unittest.TestCase):
             mock_exit.assert_not_called()
 
 
-    @patch('aws_infra_report.upload_static_website')
-    @patch('aws_infra_report.load_config')
-    @patch('aws_infra_report.parse_arguments')
+    @patch('aws_resource_manager.upload_static_website')
+    @patch('aws_resource_manager.load_config')
+    @patch('aws_resource_manager.parse_arguments')
     def test_main_with_upload_resume(self, mock_parse_arguments, mock_load_config, mock_upload_static_website):
         """Test main function with upload_resume option."""
         # Mock arguments
@@ -440,27 +457,28 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_upload_static_website.return_value = True
         
         # Test the function
-        with patch('aws_infra_report.boto3.client'), \
-             patch('aws_infra_report.get_instance_details'), \
-             patch('aws_infra_report.get_spot_price'), \
-             patch('aws_infra_report.generate_report'), \
-             patch('aws_infra_report.save_report'), \
-             patch('aws_infra_report.display_report'):
-            aws_infra_report.main()
+        with patch('aws_resource_manager.boto3.client'), \
+             patch('aws_resource_manager.get_instance_details'), \
+             patch('aws_resource_manager.get_spot_price'), \
+             patch('aws_resource_manager.generate_report'), \
+             patch('aws_resource_manager.save_report'), \
+             patch('aws_resource_manager.display_report'):
+            aws_resource_manager.main()
         
         # Check that upload_static_website was called with the correct arguments
         mock_upload_static_website.assert_called_once_with('test-bucket', 'us-west-2', self.test_config)
-        
-    @patch('aws_infra_report.deploy_cloudformation_template')
+
+    @patch('deploy_function.update_stack_parameters')
+    @patch('deploy_function.deploy_cloudformation_template')
     @patch('update_website.update_index_html')
     @patch('update_website.add_messaging_to_solution_demos')
-    @patch('aws_infra_report.upload_static_website')
-    @patch('aws_infra_report.load_config')
-    @patch('aws_infra_report.parse_arguments')
-    def test_main_with_messaging_deploy(self, mock_parse_arguments, mock_load_config, 
+    @patch('aws_resource_manager.upload_static_website')
+    @patch('aws_resource_manager.load_config')
+    @patch('aws_resource_manager.parse_arguments')
+    def test_main_with_messaging_deploy_and_website_update(self, mock_parse_arguments, mock_load_config, 
                                        mock_upload_static_website, mock_add_messaging, 
-                                       mock_update_index, mock_deploy_cloudformation):
-        """Test main function with messaging solution deployment."""
+                                       mock_update_index, mock_deploy_cloudformation, mock_update_stack_parameters):
+        """Test main function with messaging solution deployment and static website stack update."""
         # Mock arguments
         mock_args = MagicMock()
         mock_args.upload_resume = False
@@ -494,6 +512,12 @@ class TestAWSInfraReport(unittest.TestCase):
             }
         }
         
+        # Mock update_stack_parameters to return success
+        mock_update_stack_parameters.return_value = {
+            'status': 'success',
+            'message': 'Stack updated successfully with new parameters.'
+        }
+        
         # Mock update_index_html and add_messaging_to_solution_demos to return True
         mock_update_index.return_value = True
         mock_add_messaging.return_value = True
@@ -502,13 +526,13 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_upload_static_website.return_value = True
         
         # Test the function
-        with patch('aws_infra_report.boto3.client'), \
-             patch('aws_infra_report.get_instance_details'), \
-             patch('aws_infra_report.get_spot_price'), \
-             patch('aws_infra_report.generate_report'), \
-             patch('aws_infra_report.save_report'), \
-             patch('aws_infra_report.display_report'):
-            aws_infra_report.main()
+        with patch('aws_resource_manager.boto3.client'), \
+             patch('aws_resource_manager.get_instance_details'), \
+             patch('aws_resource_manager.get_spot_price'), \
+             patch('aws_resource_manager.generate_report'), \
+             patch('aws_resource_manager.save_report'), \
+             patch('aws_resource_manager.display_report'):
+            aws_resource_manager.main()
         
         # Check that deploy_cloudformation_template was called with the correct arguments
         mock_deploy_cloudformation.assert_called_once()
@@ -524,6 +548,14 @@ class TestAWSInfraReport(unittest.TestCase):
             'test-static-website-stack'
         )
         
+        # Check that update_stack_parameters was called with the correct arguments
+        mock_update_stack_parameters.assert_called_once_with(
+            'test-static-website-stack',
+            'us-west-2',
+            {'MessagingStackName': 'test-messaging-stack'},
+            config_arg
+        )
+        
         # Check that update_index_html was called with the correct arguments
         mock_update_index.assert_called_once_with(
             'https://api.example.com/prod/contact', config_arg
@@ -536,54 +568,7 @@ class TestAWSInfraReport(unittest.TestCase):
         mock_upload_static_website.assert_called_once_with(
             'test-bucket', 'us-west-2', config_arg
         )
-        
-    @patch('aws_infra_report.load_config')
-    @patch('aws_infra_report.parse_arguments')
-    def test_main_with_messaging_deploy_missing_static_website_stack(self, mock_parse_arguments, mock_load_config):
-        """Test main function with messaging solution deployment but missing static_website_stack parameter."""
-        # Mock arguments
-        mock_args = MagicMock()
-        mock_args.upload_resume = False
-        mock_args.region = 'us-west-2'
-        mock_args.deploy = 'messaging'
-        mock_args.stack_name = 'test-messaging-stack'
-        mock_args.static_website_stack = None  # Missing static_website_stack
-        mock_args.export_template = False
-        mock_args.update = False
-        mock_args.attach_bucket_policy = False
-        mock_parse_arguments.return_value = mock_args
-        
-        # Mock config
-        mock_load_config.return_value = {
-            'region': 'us-west-2',
-            's3': {'bucket': 'test-bucket'},
-            'solutions': {
-                'messaging': {
-                    'template_path': 'iac/messaging/template.yaml'
-                }
-            }
-        }
-        
-        # Test the function - should exit with error
-        with patch('sys.exit') as mock_exit, \
-             patch('builtins.print') as mock_print:
-            aws_infra_report.main()
-            
-            # Check that sys.exit was called with error code 1
-            mock_exit.assert_called_once_with(1)
-            
-            # Check that the error message was printed
-            mock_print.assert_any_call("Error: Static website stack name is required when deploying messaging solution. Please provide it via --static_website_stack option.")
-        )
 
 
 if __name__ == '__main__':
     unittest.main()
-
-
-
-
-
-
-
-

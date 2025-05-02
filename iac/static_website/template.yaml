@@ -1,450 +1,135 @@
 ---
+# Simplified CloudFormation template for static website
+# Only includes S3 bucket, CloudFront distribution, and bucket policy
 Parameters:
+  BucketNamePrefix:
+    Type: String
+    Description: Prefix for S3 bucket name
+    Default: "flatstone-solutions"
+
+  OriginShieldRegion:
+    Type: String
+    Description: AWS region for CloudFront Origin Shield
+    Default: "us-east-2"
+    
   OrganizationTag:
     Type: String
-    Description: Organization tag value
+    Description: Organization tag for resources
     Default: "flatstone services"
     
   BusinessUnitTag:
     Type: String
-    Description: Business unit tag value
+    Description: Business unit tag for resources
     Default: "marketing"
     
   EnvironmentTag:
     Type: String
-    Description: Environment tag value
+    Description: Environment tag for resources
     Default: "dev"
 
-  EmailDestination:
-    Type: String
-    Description: Destination email address for contact form submissions
-    AllowedPattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
-
-  SmsDestination:
-    Type: String
-    Description: Destination phone number for SMS messages (E.164 format)
-    AllowedPattern: "^\\+1[0-9]{10}$"
-    Default: "+18005551234"
-
-  VpcCidr:
-    Type: String
-    Default: "10.0.0.0/16"
-    Description: CIDR block for VPC
-
-  PrivateSubnet1Cidr:
-    Type: String
-    Default: "10.0.1.0/24"
-    Description: CIDR block for private subnet 1
-
-  PrivateSubnet2Cidr:
-    Type: String
-    Default: "10.0.2.0/24"
-    Description: CIDR block for private subnet 2
-
-Metadata:
-  AWSToolsMetrics:
-    IaC_Generator: "arn:aws:cloudformation:us-east-1:851002115632:generatedTemplate/3b1cbe7b-0762-44af-9389-1fb001c49bdd"
-
 Resources:
-  # VPC and Networking Resources
-  VPC:
-    Type: AWS::EC2::VPC
+  # S3 Bucket for static website content
+  StaticWebsiteBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      CidrBlock: !Ref VpcCidr
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
+      BucketName: !Sub "${BucketNamePrefix}-${AWS::Region}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
       Tags:
-        - Key: "organization"
+        - Key: Organization
           Value: !Ref OrganizationTag
-        - Key: "business_unit"
+        - Key: BusinessUnit
           Value: !Ref BusinessUnitTag
-        - Key: "environment"
+        - Key: Environment
           Value: !Ref EnvironmentTag
 
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
+  # S3 Bucket Policy for CloudFront access
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
     Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  # SMS Resources
-  SmsPool:
-    Type: AWS::PinpointSMSVoice::Pool
-    Properties:
-      Name: "ContactFormSmsPool"
-      OriginationIdentities:
-        - !Ref SmsDestination
-      Tags:
-        organization: !Ref OrganizationTag
-        business_unit: !Ref BusinessUnitTag
-        environment: !Ref EnvironmentTag
-
-  SmsConfigurationSet:
-    Type: AWS::PinpointSMSVoice::ConfigurationSet
-    Properties:
-      Name: "ContactFormSmsConfig"
-      Tags:
-        organization: !Ref OrganizationTag
-        business_unit: !Ref BusinessUnitTag
-        environment: !Ref EnvironmentTag
-
-  SmsCountryRule:
-    Type: AWS::PinpointSMSVoice::CountryRule
-    Properties:
-      ConfigurationSetName: !Ref SmsConfigurationSet
-      CountryCode: "US"
-      Enabled: true
-
-  # SES Email Identity
-  EmailIdentity:
-    Type: AWS::SES::EmailIdentity
-    Properties:
-      EmailIdentity: !Ref EmailDestination
-
-  # Existing Resources (modified as needed)
-  ContactFormKMSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: "KMS key for contact form encryption"
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
+      Bucket: !Ref StaticWebsiteBucket
+      PolicyDocument:
+        Version: '2008-10-17'
+        Id: PolicyForCloudFrontPrivateContent
         Statement:
-          - Sid: Enable IAM User Permissions
+          - Sid: AllowCloudFrontServicePrincipal
             Effect: Allow
             Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-            Action: "kms:*"
-            Resource: "*"
-          - Sid: Allow CloudWatch Logs
-            Effect: Allow
-            Principal:
-              Service: logs.amazonaws.com
-            Action:
-              - kms:Encrypt*
-              - kms:Decrypt*
-              - kms:ReEncrypt*
-              - kms:GenerateDataKey*
-              - kms:Describe*
-            Resource: "*"
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${StaticWebsiteBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
 
-  ContactFormTopic:
-    Type: AWS::SNS::Topic
+  # CloudFront Origin Access Control
+  CloudFrontOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
     Properties:
-      DisplayName: "Contact Form Notifications"
-      KmsMasterKeyId: !Ref ContactFormKMSKey
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-OAC"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub "${StaticWebsiteBucket}.s3.${AWS::Region}.amazonaws.com"
+            Id: S3Origin
+            OriginAccessControlId: !GetAtt CloudFrontOriginAccessControl.Id
+            S3OriginConfig: {}
+            OriginShield:
+              Enabled: true
+              OriginShieldRegion: !Ref OriginShieldRegion
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Using managed cache policy: CachingOptimized
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
       Tags:
-        - Key: "organization"
+        - Key: Organization
           Value: !Ref OrganizationTag
-        - Key: "business_unit"
+        - Key: BusinessUnit
           Value: !Ref BusinessUnitTag
-        - Key: "environment"
+        - Key: Environment
           Value: !Ref EnvironmentTag
-
-  ContactFormDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      KmsMasterKeyId: !Ref ContactFormKMSKey
-
-  ContactFormFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.handler
-      Role: !GetAtt ContactFormLambdaRole.Arn
-      Code:
-        ZipFile: |
-          exports.handler = async (event) => {
-            const AWS = require('aws-sdk');
-            const sns = new AWS.SNS();
-            const ses = new AWS.SES();
-            
-            const headers = {
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-              'Access-Control-Allow-Methods': 'OPTIONS,POST'
-            };
-            
-            if (event.httpMethod === 'OPTIONS') {
-              return {
-                statusCode: 200,
-                headers: headers,
-                body: ''
-              };
-            }
-            
-            const body = JSON.parse(event.body);
-            const { messageType, message } = body;
-            
-            try {
-              if (messageType === 'email') {
-                await ses.sendEmail({
-                  Destination: { ToAddresses: [process.env.EMAIL_DESTINATION] },
-                  Message: {
-                    Body: { Text: { Data: message } },
-                    Subject: { Data: 'New Contact Form Submission' }
-                  },
-                  Source: process.env.EMAIL_DESTINATION
-                }).promise();
-              } else if (messageType === 'sms') {
-                await sns.publish({
-                  PhoneNumber: process.env.SMS_DESTINATION,
-                  Message: message
-                }).promise();
-              }
-              
-              return {
-                statusCode: 200,
-                headers: headers,
-                body: JSON.stringify({ message: 'Message sent successfully' })
-              };
-            } catch (error) {
-              return {
-                statusCode: 500,
-                headers: headers,
-                body: JSON.stringify({ error: error.message })
-              };
-            }
-          }
-      Runtime: nodejs20.x
-      Environment:
-        Variables:
-          EMAIL_DESTINATION: !Ref EmailDestination
-          SMS_DESTINATION: !Ref SmsDestination
-      KmsKeyArn: !GetAtt ContactFormKMSKey.Arn
-      DeadLetterConfig:
-        TargetArn: !GetAtt ContactFormDLQ.Arn
-      VpcConfig:
-        SecurityGroupIds: 
-          - !Ref LambdaSecurityGroup
-        SubnetIds: 
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
-      ReservedConcurrentExecutions: 10
-      MemorySize: 128
-      Timeout: 30
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  # Lambda Permission for API Gateway
-  LambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref ContactFormFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ContactFormApi}/*"
-
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for Lambda function
-      VpcId: !Ref VPC
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  ContactFormLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: ContactFormPermissions
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sns:Publish
-                Resource: !Ref ContactFormTopic
-              - Effect: Allow
-                Action:
-                  - ses:SendEmail
-                  - ses:SendRawEmail
-                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${EmailDestination}"
-              - Effect: Allow
-                Action:
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                Resource: !GetAtt ContactFormKMSKey.Arn
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  ContactFormApi:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: "Contact Form API"
-      Description: "API for handling contact form submissions"
-      EndpointConfiguration:
-        Types: ["REGIONAL"]
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  ContactFormResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref ContactFormApi
-      ParentId: !GetAtt ContactFormApi.RootResourceId
-      PathPart: "contact"
-
-  ContactFormMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ContactFormApi
-      ResourceId: !Ref ContactFormResource
-      HttpMethod: POST
-      AuthorizationType: AWS_IAM
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ContactFormFunction.Arn}/invocations"
-
-  # CORS Configuration
-  ContactFormOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ContactFormApi
-      ResourceId: !Ref ContactFormResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
-            method.response.header.Access-Control-Allow-Origin: true
-
-  ApiGatewayDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn: 
-      - ContactFormMethod
-      - ContactFormOptionsMethod
-    Properties:
-      RestApiId: !Ref ContactFormApi
-      Description: "Production deployment for contact form API"
-
-  # IAM Role for API Gateway CloudWatch Logs
-  ApiGatewayCloudWatchLogsRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
-      Tags:
-        - Key: "organization"
-          Value: !Ref OrganizationTag
-        - Key: "business_unit"
-          Value: !Ref BusinessUnitTag
-        - Key: "environment"
-          Value: !Ref EnvironmentTag
-
-  # Configure API Gateway Account settings for CloudWatch Logs
-  ApiGatewayAccount:
-    Type: AWS::ApiGateway::Account
-    Properties:
-      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
-
-  ApiGatewayStage:
-    Type: AWS::ApiGateway::Stage
-    Properties:
-      RestApiId: !Ref ContactFormApi
-      DeploymentId: !Ref ApiGatewayDeployment
-      StageName: "prod"
-      CacheClusterEnabled: true
-      CacheClusterSize: '0.5'
-      TracingEnabled: true
-      AccessLogSetting:
-        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
-        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "caller":"$context.identity.caller", "user":"$context.identity.user", "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod", "resourcePath":"$context.resourcePath", "status":"$context.status", "protocol":"$context.protocol", "responseLength":"$context.responseLength" }'
-      MethodSettings:
-        - ResourcePath: "/*"
-          HttpMethod: "*"
-          LoggingLevel: INFO
-
-  ApiGatewayLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      RetentionInDays: 7
-      KmsKeyId: !GetAtt ContactFormKMSKey.Arn
 
 Outputs:
-  ApiEndpoint:
-    Description: "API Gateway endpoint URL for contact form"
-    Value: !Sub "https://${ContactFormApi}.execute-api.${AWS::Region}.amazonaws.com/prod/contact"
-  ContactFormTopicArn:
-    Description: "ARN of the SNS topic for contact form notifications"
-    Value: !Ref ContactFormTopic
-  VpcId:
-    Description: "VPC ID"
-    Value: !Ref VPC
-  PrivateSubnet1Id:
-    Description: "Private Subnet 1 ID"
-    Value: !Ref PrivateSubnet1
-  PrivateSubnet2Id:
-    Description: "Private Subnet 2 ID"
-    Value: !Ref PrivateSubnet2
+  CloudFrontDistributionDomainName:
+    Description: "Domain name of the CloudFront distribution"
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionDomainName"
+  CloudFrontDistributionId:
+    Description: "ID of the CloudFront distribution"
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+  S3BucketName:
+    Description: "Name of the S3 bucket for static website content"
+    Value: !Ref StaticWebsiteBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"

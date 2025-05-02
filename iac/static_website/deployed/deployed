@@ -1,6 +1,0 @@
-# Deployed CloudFormation Templates
-
-This directory contains CloudFormation templates that have been successfully deployed.
-Templates are stored here for reference and should not be modified directly.
-
-To deploy a new template, use the aws_infra_report.py CLI tool.

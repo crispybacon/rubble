@@ -36,12 +36,62 @@ Parameters:
     AllowedValues:
       - "US"
       
+  SmsOriginatorId:
+    Type: String
+    Description: Originator ID for SMS messages (required by AWS End User Messaging)
+    Default: "ContactForm"
+    MaxLength: 11
+    AllowedPattern: "^[a-zA-Z0-9]{1,11}$"
+      
   StaticWebsiteStackName:
     Type: String
     Description: Name of the static website CloudFormation stack to update with the messaging API endpoint
     Default: ""
+    
+  ContactLogRetentionDays:
+    Type: Number
+    Description: Number of days to retain contact logs in CloudWatch
+    Default: 30
+    MinValue: 1
+    MaxValue: 365
+    
+  VpcId:
+    Type: String
+    Description: VPC ID from the static website stack
+    Default: ""
+    
+  PrivateSubnet1Id:
+    Type: String
+    Description: Private Subnet 1 ID from the static website stack
+    Default: ""
+    
+  PrivateSubnet2Id:
+    Type: String
+    Description: Private Subnet 2 ID from the static website stack
+    Default: ""
+
+Conditions:
+  HasVpcConfig: !And 
+    - !Not [!Equals [!Ref VpcId, ""]]
+    - !Not [!Equals [!Ref PrivateSubnet1Id, ""]]
+    - !Not [!Equals [!Ref PrivateSubnet2Id, ""]]
 
 Resources:
+  # Security Group for Lambda function
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: HasVpcConfig
+    Properties:
+      GroupDescription: Security group for Lambda function
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+
   # KMS Key for encryption
   MessagingKMSKey:
     Type: AWS::KMS::Key
@@ -68,6 +118,39 @@ Resources:
               - kms:GenerateDataKey*
               - kms:Describe*
             Resource: "*"
+      Tags:
+        - Key: "organization"
+          Value: !Ref OrganizationTag
+        - Key: "business_unit"
+          Value: !Ref BusinessUnitTag
+        - Key: "environment"
+          Value: !Ref EnvironmentTag
+
+  # DynamoDB Table for storing contact form submissions
+  ContactFormTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-ContactFormSubmissions"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref MessagingKMSKey
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
       Tags:
         - Key: "organization"
           Value: !Ref OrganizationTag
@@ -143,6 +226,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !If [HasVpcConfig, arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole, !Ref "AWS::NoValue"]
       Policies:
         - PolicyName: ContactFormPermissions
           PolicyDocument:
@@ -168,6 +252,20 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt ContactFormDLQ.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt ContactFormTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
       Tags:
         - Key: "organization"
           Value: !Ref OrganizationTag
@@ -187,6 +285,8 @@ Resources:
             const AWS = require('aws-sdk');
             const sns = new AWS.SNS();
             const ses = new AWS.SES();
+            const dynamodb = new AWS.DynamoDB.DocumentClient();
+            const { v4: uuidv4 } = require('uuid');
             
             const headers = {
               'Access-Control-Allow-Origin': '*',
@@ -194,7 +294,20 @@ Resources:
               'Access-Control-Allow-Methods': 'OPTIONS,POST'
             };
             
+            // Extract client information
+            const clientIp = event.requestContext?.identity?.sourceIp || 'unknown';
+            const userAgent = event.requestContext?.identity?.userAgent || 'unknown';
+            const requestTime = event.requestContext?.requestTime || new Date().toISOString();
+            
+            console.log('Contact form submission received:', {
+              clientIp,
+              userAgent,
+              requestTime,
+              httpMethod: event.httpMethod
+            });
+            
             if (event.httpMethod === 'OPTIONS') {
+              console.log('Handling OPTIONS request');
               return {
                 statusCode: 200,
                 headers: headers,
@@ -202,43 +315,111 @@ Resources:
               };
             }
             
-            const body = JSON.parse(event.body);
-            const { messageType, message } = body;
-            
             try {
-              if (messageType === 'email') {
-                await ses.sendEmail({
-                  Destination: { ToAddresses: [process.env.EMAIL_DESTINATION] },
-                  Message: {
-                    Body: { Text: { Data: message } },
-                    Subject: { Data: 'New Contact Form Submission' }
-                  },
-                  Source: process.env.EMAIL_DESTINATION
+              const body = JSON.parse(event.body);
+              const { messageType, message } = body;
+              
+              // Generate a unique ID for this submission
+              const submissionId = uuidv4();
+              const timestamp = new Date().toISOString();
+              
+              // Log the message details
+              console.log('Processing contact form submission:', {
+                submissionId,
+                messageType,
+                clientIp,
+                userAgent,
+                messagePreview: message.substring(0, 100) + (message.length > 100 ? '...' : '')
+              });
+              
+              // Store in DynamoDB
+              const ttl = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60); // 1 year TTL
+              const dbItem = {
+                id: submissionId,
+                timestamp: timestamp,
+                messageType: messageType,
+                message: message,
+                clientIp: clientIp,
+                userAgent: userAgent,
+                ttl: ttl
+              };
+              
+              try {
+                await dynamodb.put({
+                  TableName: process.env.CONTACT_FORM_TABLE,
+                  Item: dbItem
                 }).promise();
-              } else if (messageType === 'sms') {
-                // Use SNS to send SMS
-                await sns.publish({
-                  TopicArn: process.env.SMS_TOPIC_ARN,
-                  Message: message,
-                  MessageAttributes: {
-                    'AWS.SNS.SMS.SenderID': {
-                      DataType: 'String',
-                      StringValue: 'ContactForm'
-                    },
-                    'AWS.SNS.SMS.SMSType': {
-                      DataType: 'String',
-                      StringValue: 'Transactional'
-                    }
-                  }
-                }).promise();
+                console.log(`Successfully stored submission ${submissionId} in DynamoDB`);
+              } catch (dbError) {
+                console.error('Error storing submission in DynamoDB:', dbError);
+                // Continue processing even if DynamoDB storage fails
               }
               
+              if (messageType === 'email') {
+                try {
+                  await ses.sendEmail({
+                    Destination: { ToAddresses: [process.env.EMAIL_DESTINATION] },
+                    Message: {
+                      Body: { 
+                        Text: { 
+                          Data: `Message: ${message}\n\nSubmitted from: ${clientIp}\nBrowser: ${userAgent}\nTime: ${timestamp}` 
+                        }
+                      },
+                      Subject: { Data: 'New Contact Form Submission' }
+                    },
+                    Source: process.env.EMAIL_DESTINATION
+                  }).promise();
+                  console.log('Email sent successfully to:', process.env.EMAIL_DESTINATION);
+                } catch (emailError) {
+                  console.error('Failed to send email:', emailError);
+                  console.error('Email destination:', process.env.EMAIL_DESTINATION);
+                  console.error('Email content:', message.substring(0, 100) + '...');
+                  throw emailError;
+                }
+              } else if (messageType === 'sms') {
+                // Use SNS to send SMS with AWS End User Messaging originator ID
+                try {
+                  await sns.publish({
+                    TopicArn: process.env.SMS_TOPIC_ARN,
+                    Message: `${message}\n\nFrom: ${clientIp}`,
+                    MessageAttributes: {
+                      'AWS.SNS.SMS.SenderID': {
+                        DataType: 'String',
+                        StringValue: process.env.SMS_ORIGINATOR_ID
+                      },
+                      'AWS.SNS.SMS.SMSType': {
+                        DataType: 'String',
+                        StringValue: 'Transactional'
+                      },
+                      'AWS.MM.SMS.OriginationNumber': {
+                        DataType: 'String',
+                        StringValue: process.env.SMS_ORIGINATOR_ID
+                      }
+                    }
+                  }).promise();
+                  console.log('SMS sent successfully to topic:', process.env.SMS_TOPIC_ARN);
+                  console.log('SMS destination:', process.env.SMS_DESTINATION);
+                } catch (smsError) {
+                  console.error('Failed to send SMS:', smsError);
+                  console.error('SMS topic ARN:', process.env.SMS_TOPIC_ARN);
+                  console.error('SMS destination:', process.env.SMS_DESTINATION);
+                  console.error('SMS originator ID:', process.env.SMS_ORIGINATOR_ID);
+                  console.error('SMS content:', message.substring(0, 100) + '...');
+                  throw smsError;
+                }
+              }
+              
+              console.log(`Successfully processed ${messageType} submission ${submissionId}`);
               return {
                 statusCode: 200,
                 headers: headers,
-                body: JSON.stringify({ message: 'Message sent successfully' })
+                body: JSON.stringify({ 
+                  message: 'Message sent successfully',
+                  submissionId: submissionId
+                })
               };
             } catch (error) {
+              console.error('Error in contact form handler:', error);
               return {
                 statusCode: 500,
                 headers: headers,
@@ -252,9 +433,19 @@ Resources:
           EMAIL_DESTINATION: !Ref EmailDestination
           SMS_DESTINATION: !Ref SmsDestination
           SMS_TOPIC_ARN: !Ref SmsTopic
+          SMS_ORIGINATOR_ID: !Ref SmsOriginatorId
+          CONTACT_FORM_TABLE: !Ref ContactFormTable
       KmsKeyArn: !GetAtt MessagingKMSKey.Arn
       DeadLetterConfig:
         TargetArn: !GetAtt ContactFormDLQ.Arn
+      VpcConfig: !If
+        - HasVpcConfig
+        - SecurityGroupIds: 
+            - !Ref LambdaSecurityGroup
+          SubnetIds: 
+            - !Ref PrivateSubnet1Id
+            - !Ref PrivateSubnet2Id
+        - !Ref "AWS::NoValue"
       ReservedConcurrentExecutions: 10
       MemorySize: 128
       Timeout: 30
@@ -265,6 +456,14 @@ Resources:
           Value: !Ref BusinessUnitTag
         - Key: "environment"
           Value: !Ref EnvironmentTag
+
+  # CloudWatch Log Group for Lambda function
+  ContactFormLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ContactFormFunction}"
+      RetentionInDays: !Ref ContactLogRetentionDays
+      KmsKeyId: !GetAtt MessagingKMSKey.Arn
 
   # API Gateway for the contact form
   ContactFormApi:
@@ -417,3 +616,21 @@ Outputs:
     Value: !Ref EmailIdentity
     Export:
       Name: !Sub "${AWS::StackName}-EmailIdentity"
+      
+  ContactFormTableName:
+    Description: "Name of the DynamoDB table for contact form submissions"
+    Value: !Ref ContactFormTable
+    Export:
+      Name: !Sub "${AWS::StackName}-ContactFormTableName"
+      
+  ContactFormFunctionArn:
+    Description: "ARN of the Lambda function for contact form"
+    Value: !GetAtt ContactFormFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ContactFormFunctionArn"
+      
+  ContactFormApiId:
+    Description: "ID of the API Gateway for contact form"
+    Value: !Ref ContactFormApi
+    Export:
+      Name: !Sub "${AWS::StackName}-ContactFormApiId"

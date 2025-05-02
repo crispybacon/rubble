@@ -1,8 +1,30 @@
-# AWS Infrastructure Report Tool
+# AWS Resource Manager
 
-A Python tool for generating reports about deployed AWS infrastructure, with a focus on cost analysis. The tool also provides functionality to deploy and manage various AWS solutions.
+A Python tool for managing AWS resources, including generating reports about deployed infrastructure with a focus on cost analysis. The tool also provides functionality to deploy and manage various AWS solutions.
 
 ## Recent Fixes
+
+### CloudFront Distribution Deployment Timeout Fix
+
+Fixed an issue where the CloudFront distribution would fail to deploy with the error:
+```
+Resource handler returned message: "Exceeded attempts to wait" (RequestToken: 7c3bf81b-9f74-3289-9208-7329a4ec5e6e, HandlerErrorCode: NotStabilized)
+```
+
+The fix increases the CloudFormation waiter timeout configuration to accommodate the longer deployment time needed for CloudFront distributions. CloudFront distributions can take 15-30 minutes to fully deploy and stabilize, which exceeds the default CloudFormation waiter timeout. The following changes were made:
+
+1. Increased the waiter delay from 15 to 30 seconds
+2. Increased the maximum number of attempts from 40 to 120 (allowing up to 60 minutes for deployment)
+3. Added custom waiter configurations for all CloudFormation operations (stack creation, updates, and change sets)
+
+### CloudFrontRealTimeLogConfig SamplingRate Fix
+
+Fixed an issue where the CloudFrontRealTimeLogConfig resource would fail to create with the error:
+```
+Resource handler returned message: "Model validation failed (#: required key [SamplingRate] not found)" (RequestToken: d609279e-700d-33bc-b036-190e196ec859, HandlerErrorCode: InvalidRequest)
+```
+
+The fix adds the required SamplingRate parameter to the CloudFrontRealTimeLogConfig resource in the CloudFormation template. The SamplingRate parameter specifies what percentage of requests should be logged in real-time (value set to 100 for full logging).
 
 ### AwsRegion Parameter Fix
 
@@ -12,6 +34,21 @@ Error deploying CloudFormation template: An error occurred (ValidationError) whe
 ```
 
 The fix ensures that the `AwsRegion` parameter is only added to CloudFormation templates that actually define this parameter. Previously, the code was unconditionally adding this parameter to all templates, causing validation errors for templates that didn't include it.
+
+### Deployment Order Fix
+
+Fixed an issue where the static_website stack would fail to deploy with the error:
+```
+The resource ContactFormFunction is in a CREATE_FAILED state
+This AWS::Lambda::Function resource is in a CREATE_FAILED state.
+Resource handler returned message: "The provided execution role does not have permissions to call SendMessage on SQS"
+```
+
+The fix removes the dependency on SQS in the static_website stack, allowing it to be deployed before the messaging stack. The full SMS and Email notification infrastructure is now only installed when the AWS End User Messaging stack is deployed.
+
+**Important:** To ensure proper functionality, deploy the stacks in this order:
+1. First deploy the static_website stack
+2. Then deploy the messaging stack
 
 ## Features
 
@@ -51,7 +88,7 @@ solutions:
     content_dir: "iac/static_website/content"
     parameters:
       BucketNamePrefix: "your-bucket-prefix"
-      OriginShieldRegion: "us-east-1"
+      OriginShieldRegion: "us-east-2"
   messaging:
     template_path: "iac/messaging/template.yaml"
     deployed_dir: "iac/deployed"
@@ -71,31 +108,31 @@ messaging:
 
 ```bash
 # Use region from config file
-python aws_infra_report.py
+python aws_resource_manager.py
 
 # Override region from command line
-python aws_infra_report.py --region us-west-2
+python aws_resource_manager.py --region us-west-2
 
 # Deploy a CloudFormation stack for a solution
-python aws_infra_report.py --deploy static_website --stack_name your-stack-name
+python aws_resource_manager.py --deploy static_website --stack_name your-stack-name
 
 # Update an existing CloudFormation stack with changes
-python aws_infra_report.py --deploy static_website --stack_name your-stack-name --update
+python aws_resource_manager.py --deploy static_website --stack_name your-stack-name --update
 
 # Deploy the messaging solution for SMS and email contact forms
-python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
+python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
 
 # Update an existing messaging solution
-python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
+python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
 
 # Note: The bucket policy is automatically attached during CloudFormation deployment.
 # The following commands are only needed if you want to manually update an existing bucket policy:
 
 # Manually attach bucket policy to allow CloudFront to access S3 bucket
-python aws_infra_report.py --attach_bucket_policy --s3_bucket your-s3-bucket-name
+python aws_resource_manager.py --attach_bucket_policy --s3_bucket your-s3-bucket-name
 
 # Manually attach bucket policy with specific CloudFront distribution ID
-python aws_infra_report.py --attach_bucket_policy --s3_bucket your-s3-bucket-name --cloudfront_distribution_id EDFDVBD6EXAMPLE
+python aws_resource_manager.py --attach_bucket_policy --s3_bucket your-s3-bucket-name --cloudfront_distribution_id EDFDVBD6EXAMPLE
 ```
 
 ## Output
@@ -129,24 +166,29 @@ The static website features a responsive design with collapsible sections for wo
      static_website:
        parameters:
          BucketNamePrefix: "your-bucket-prefix"
-         OriginShieldRegion: "us-east-1"
+         OriginShieldRegion: "us-east-2"
    s3:
      bucket: "your-s3-bucket-name"
    ```
 
-2. Deploy the CloudFormation stack:
+2. Deploy the static_website CloudFormation stack first:
    ```bash
-   python aws_infra_report.py --deploy static_website --stack_name your-stack-name
+   python aws_resource_manager.py --deploy static_website --stack_name your-stack-name
    ```
 
 3. Upload the website content to the S3 bucket:
    ```bash
-   python aws_infra_report.py --upload_resume --s3_bucket your-s3-bucket-name
+   python aws_resource_manager.py --upload_resume --s3_bucket your-s3-bucket-name
    ```
 
 4. The CloudFormation template automatically attaches a bucket policy that allows CloudFront to access the S3 bucket. No additional action is required for this step.
 
-5. Access your website using the CloudFront URL provided in the deployment output.
+5. Deploy the messaging stack to enable the contact form functionality:
+   ```bash
+   python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-stack-name
+   ```
+
+6. Access your website using the CloudFront URL provided in the deployment output.
 
 ### Customization
 
@@ -166,14 +208,20 @@ The static website includes SMS and email contact forms that allow visitors to s
      sms:
        destination: "+12345678901"  # Your phone number in E.164 format (e.g., +12345678901)
        country: "US"  # Currently only US numbers are supported
+       originator_id: "YourName"    # Sender ID for SMS messages (max 11 alphanumeric characters)
    ```
 
-2. Deploy the messaging solution:
+2. Make sure you've already deployed the static_website stack first:
    ```bash
-   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack
+   python aws_resource_manager.py --deploy static_website --stack_name your-stack-name
    ```
 
-3. After deployment, the contact form functionality will be available on your website. Visitors can click the email or SMS icons in the top right corner to open the respective contact forms.
+3. Then deploy the messaging solution:
+   ```bash
+   python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-stack-name
+   ```
+
+4. After deployment, the contact form functionality will be available on your website. Visitors can click the email or SMS icons in the top right corner to open the respective contact forms.
 
 **Note:** The email address specified in the configuration must be verified in Amazon SES before it can be used for sending emails. The verification process is initiated automatically during deployment, but you'll need to check your email and confirm the verification.
 
@@ -183,10 +231,10 @@ To update an existing CloudFormation stack with changes:
 
 ```bash
 # Update the static website stack
-python aws_infra_report.py --deploy static_website --stack_name your-stack-name --update
+python aws_resource_manager.py --deploy static_website --stack_name your-stack-name --update
 
 # Update the messaging stack
-python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
+python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
 ```
 
 When you update the messaging solution, the static website will be automatically updated with the new API endpoint and the messaging solution will be added to the Solution Demonstrations section.
@@ -195,7 +243,7 @@ When you update the messaging solution, the static website will be automatically
 
 To export the deployed CloudFormation template for reference:
 ```bash
-python aws_infra_report.py --deploy static_website --stack_name your-stack-name --export_template
+python aws_resource_manager.py --deploy static_website --stack_name your-stack-name --export_template
 ```
 The exported template will be saved to the `iac/deployed` directory.
 
@@ -225,20 +273,26 @@ This solution deploys the infrastructure needed for SMS and email contact forms 
      sms:
        destination: "+12345678901"  # Your phone number in E.164 format (e.g., +12345678901)
        country: "US"  # Currently only US numbers are supported
+       originator_id: "YourName"    # Sender ID for SMS messages (max 11 alphanumeric characters)
    ```
 
-2. Deploy the CloudFormation stack:
+2. First, make sure you've deployed the static_website stack:
    ```bash
-   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
+   python aws_resource_manager.py --deploy static_website --stack_name your-static-website-stack
+   ```
+
+3. Then deploy the messaging CloudFormation stack:
+   ```bash
+   python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack
    ```
    
-   **Note:** The `--static_website_stack` parameter is required and should specify the name of the static website stack that you want to update with the messaging API endpoint. This is necessary because there could be multiple static website deployments in the same AWS account.
+   **Important:** The `--static_website_stack` parameter is required and should specify the name of the static website stack that you want to update with the messaging API endpoint. This is necessary because there could be multiple static website deployments in the same AWS account.
 
-3. The deployment will automatically update the static website with the API endpoint for the contact forms. If you've already deployed the static website, the messaging solution will be added to the Solution Demonstrations section.
+4. The deployment will automatically update the static website with the API endpoint for the contact forms. If you've already deployed the static website, the messaging solution will be added to the Solution Demonstrations section.
 
-4. If you need to update the messaging solution later:
+5. If you need to update the messaging solution later:
    ```bash
-   python aws_infra_report.py --deploy messaging --stack_name your-messaging-stack --update
+   python aws_resource_manager.py --deploy messaging --stack_name your-messaging-stack --static_website_stack your-static-website-stack --update
    ```
 
 ### Security Considerations
@@ -251,10 +305,6 @@ This solution deploys the infrastructure needed for SMS and email contact forms 
 </details>
 
 <!-- Additional solutions can be added here following the same pattern -->
-
-
-
-
 
 
 

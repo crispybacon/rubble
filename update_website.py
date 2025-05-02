@@ -220,6 +220,7 @@ def add_messaging_to_solution_demos(config):
             </li>"""
             
             # Insert the new solution demo entry after the existing entries
+            # Make sure it's properly nested at the same level as the static website entry
             updated_content = re.sub(
                 solution_demos_pattern,
                 f'<div class="solutionDemos">\n          <h2>\n            Solution Demonstrations\n          </h2>\n          <ul>{solution_demos_match.group(1)}{messaging_solution_entry}\n          </ul>',

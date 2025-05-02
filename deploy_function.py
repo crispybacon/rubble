@@ -43,6 +43,117 @@ def load_cloudformation_yaml(yaml_content):
         # Fall back to safe_load which might work for simpler templates
         return yaml.safe_load(yaml_content)
 
+def upload_static_website(s3_bucket, region, config=None):
+    """
+    Upload static website content to an S3 bucket.
+    
+    Args:
+        s3_bucket: Name of the S3 bucket
+        region: AWS region
+        config: Configuration dictionary
+        
+    Returns:
+        bool: True if upload was successful, False otherwise
+    """
+    try:
+        # Initialize S3 client
+        s3 = boto3.client('s3', region_name=region)
+        
+        # Get the content directory from config if available
+        static_website_dir = 'iac/static_website'
+        content_dir_path = None
+        
+        if config and 'solutions' in config and 'static_website' in config['solutions']:
+            solution_config = config['solutions']['static_website']
+            if 'content_dir' in solution_config:
+                content_dir_path = solution_config['content_dir']
+        
+        # Check if the directory exists
+        website_dir = Path(static_website_dir)
+        if not website_dir.exists() or not website_dir.is_dir():
+            print(f"Error: Static website directory '{static_website_dir}' not found.")
+            return False
+        
+        # Use the content directory from config if specified, otherwise check for a content subdirectory
+        if content_dir_path:
+            content_dir = Path(content_dir_path)
+            if content_dir.exists() and content_dir.is_dir():
+                website_dir = content_dir
+                print(f"Using content directory from config: {content_dir}")
+            else:
+                print(f"Content directory from config not found: {content_dir_path}")
+                # Fall back to checking for a content subdirectory
+                content_subdir = website_dir / 'content'
+                if content_subdir.exists() and content_subdir.is_dir():
+                    website_dir = content_subdir
+                    print(f"Using content subdirectory: {content_subdir}")
+                else:
+                    print(f"Content subdirectory not found, using main directory: {website_dir}")
+        else:
+            # Check if the content directory exists, if not, use the main directory
+            content_subdir = website_dir / 'content'
+            if content_subdir.exists() and content_subdir.is_dir():
+                website_dir = content_subdir
+                print(f"Using content subdirectory: {content_subdir}")
+            else:
+                print(f"Content subdirectory not found, using main directory: {website_dir}")
+        
+        # Check if the bucket exists
+        try:
+            s3.head_bucket(Bucket=s3_bucket)
+        except Exception as e:
+            print(f"Error: S3 bucket '{s3_bucket}' not accessible: {e}")
+            return False
+        
+        # Upload only index.html, pictures, and CSS files
+        file_count = 0
+        for file_path in website_dir.glob('**/*'):
+            if file_path.is_file():
+                # Only allow index.html, CSS files, and image files
+                if (file_path.name == 'index.html' or 
+                    file_path.suffix.lower() == '.css' or 
+                    file_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico']):
+                    
+                    # Calculate the relative path for the S3 key
+                    relative_path = file_path.relative_to(website_dir)
+                    s3_key = str(relative_path)
+                    
+                    # Determine content type based on file extension
+                    content_type = 'application/octet-stream'  # Default
+                    if file_path.suffix == '.html':
+                        content_type = 'text/html'
+                    elif file_path.suffix == '.css':
+                        content_type = 'text/css'
+                    elif file_path.suffix in ['.jpg', '.jpeg']:
+                        content_type = 'image/jpeg'
+                    elif file_path.suffix == '.png':
+                        content_type = 'image/png'
+                    elif file_path.suffix == '.gif':
+                        content_type = 'image/gif'
+                    elif file_path.suffix == '.svg':
+                        content_type = 'image/svg+xml'
+                    elif file_path.suffix == '.ico':
+                        content_type = 'image/x-icon'
+                    
+                    # Upload the file
+                    print(f"Uploading {file_path} to s3://{s3_bucket}/{s3_key}")
+                    with open(file_path, 'rb') as file_data:
+                        s3.put_object(
+                            Bucket=s3_bucket,
+                            Key=s3_key,
+                            Body=file_data,
+                            ContentType=content_type
+                        )
+                    file_count += 1
+                else:
+                    print(f"Skipping file (not index.html, CSS, or image): {file_path}")
+        
+        print(f"Successfully uploaded {file_count} files to s3://{s3_bucket}/")
+        return True
+    except Exception as e:
+        print(f"Error uploading static website content: {e}")
+        return False
+
 def attach_bucket_policy(bucket_name, region, cloudfront_distribution_arn=None):
     """
     Attach a bucket policy to allow CloudFront to access the S3 bucket.
@@ -230,6 +341,107 @@ def attach_bucket_policy(bucket_name, region, cloudfront_distribution_arn=None):
         print(f"Error attaching bucket policy: {e}")
         return False
 
+def update_stack_parameters(stack_name, region, new_parameters, config=None):
+    """
+    Update a CloudFormation stack's parameters without changing the template.
+    
+    Args:
+        stack_name: Name of the CloudFormation stack
+        region: AWS region
+        new_parameters: Dictionary of parameter key-value pairs to update
+        config: Configuration dictionary (optional)
+        
+    Returns:
+        dict: Update result with status and message
+    """
+    try:
+        # Initialize CloudFormation client
+        cfn = boto3.client('cloudformation', region_name=region)
+        
+        # Get the current stack template and parameters
+        try:
+            stack_info = cfn.describe_stacks(StackName=stack_name)
+            current_parameters = stack_info['Stacks'][0].get('Parameters', [])
+            
+            # Convert current parameters to dictionary for easier lookup
+            current_params_dict = {param['ParameterKey']: param['ParameterValue'] for param in current_parameters}
+            
+            # Get the current template
+            template_response = cfn.get_template(
+                StackName=stack_name,
+                TemplateStage='Original'
+            )
+            template_body = template_response['TemplateBody']
+            
+            # Prepare parameters for update, merging current with new
+            update_parameters = []
+            for key, value in current_params_dict.items():
+                if key in new_parameters:
+                    # Use the new value
+                    update_parameters.append({
+                        'ParameterKey': key,
+                        'ParameterValue': new_parameters[key]
+                    })
+                else:
+                    # Keep the current value
+                    update_parameters.append({
+                        'ParameterKey': key,
+                        'ParameterValue': value
+                    })
+            
+            # Add any new parameters that weren't in the current parameters
+            for key, value in new_parameters.items():
+                if key not in current_params_dict:
+                    update_parameters.append({
+                        'ParameterKey': key,
+                        'ParameterValue': value
+                    })
+            
+            # Update the stack with the new parameters
+            print(f"Updating stack '{stack_name}' with new parameters: {new_parameters}")
+            cfn.update_stack(
+                StackName=stack_name,
+                TemplateBody=template_body,
+                Parameters=update_parameters,
+                Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND']
+            )
+            
+            # Wait for the update to complete
+            print(f"Waiting for stack update to complete...")
+            waiter = cfn.get_waiter('stack_update_complete')
+            
+            # Configure the waiter with increased timeout for CloudFront distributions
+            waiter_config = {
+                'Delay': 30,  # Check every 30 seconds
+                'MaxAttempts': 120  # Wait up to 60 minutes (120 * 30 seconds)
+            }
+            
+            print(f"Using extended waiter configuration: {waiter_config}")
+            waiter.wait(StackName=stack_name, WaiterConfig=waiter_config)
+            
+            print(f"Stack '{stack_name}' updated successfully with new parameters.")
+            return {
+                'status': 'success',
+                'message': f"Stack '{stack_name}' updated successfully with new parameters."
+            }
+            
+        except cfn.exceptions.ClientError as e:
+            if 'No updates are to be performed' in str(e):
+                print(f"No updates needed for stack '{stack_name}'. Parameters may already be set to the desired values.")
+                return {
+                    'status': 'success',
+                    'message': f"No updates needed for stack '{stack_name}'. Parameters may already be set to the desired values."
+                }
+            else:
+                raise
+    
+    except Exception as e:
+        print(f"Error updating stack parameters: {e}")
+        return {
+            'status': 'error',
+            'message': str(e)
+        }
+
 def export_deployed_template(solution_name, stack_name, region, config):
     """
     Export a deployed CloudFormation template to the deployed directory.
@@ -363,8 +575,8 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                     'ParameterValue': config['tags']['environment']
                 })
         
-        # Add messaging parameters if they exist in the config
-        if 'messaging' in config:
+        # Add messaging parameters if they exist in the config and we're deploying the messaging solution
+        if 'messaging' in config and solution_name == 'messaging':
             if 'email' in config['messaging'] and 'destination' in config['messaging']['email']:
                 parameters.append({
                     'ParameterKey': 'EmailDestination',
@@ -379,6 +591,11 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                 parameters.append({
                     'ParameterKey': 'SmsCountry',
                     'ParameterValue': config['messaging']['sms']['country']
+                })
+            if 'sms' in config['messaging'] and 'originator_id' in config['messaging']['sms']:
+                parameters.append({
+                    'ParameterKey': 'SmsOriginatorId',
+                    'ParameterValue': config['messaging']['sms']['originator_id']
                 })
         
         if force_update:
@@ -434,10 +651,19 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                 # Wait for change set creation to complete
                 print("Waiting for change set creation to complete...")
                 waiter = cfn.get_waiter('change_set_create_complete')
+                
+                # Configure the waiter with increased timeout
+                waiter_config = {
+                    'Delay': 15,  # Check every 15 seconds
+                    'MaxAttempts': 40  # Wait up to 10 minutes (40 * 15 seconds)
+                }
+                
                 try:
+                    print(f"Using extended waiter configuration: {waiter_config}")
                     waiter.wait(
                         StackName=stack_name,
-                        ChangeSetName=change_set_name
+                        ChangeSetName=change_set_name,
+                        WaiterConfig=waiter_config
                     )
                     
                     # Execute the change set
@@ -480,6 +706,15 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                             # Attach bucket policy
                             attach_bucket_policy(outputs['S3BucketName'], region, cloudfront_arn)
                     
+                    # Upload the static website files to the S3 bucket if this is the static website solution
+                    if solution_name == 'static_website' and 'S3BucketName' in outputs:
+                        print(f"Uploading static website files to S3 bucket: {outputs['S3BucketName']}")
+                        upload_success = upload_static_website(outputs['S3BucketName'], region, config)
+                        if upload_success:
+                            print("Successfully uploaded static website files to S3 bucket.")
+                        else:
+                            print("Warning: Failed to upload static website files to S3 bucket.")
+                    
                     return {
                         'status': 'success', 
                         'message': 'No updates were performed on the stack.',
@@ -515,6 +750,14 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                         
                         # Attach bucket policy
                         attach_bucket_policy(outputs['S3BucketName'], region, cloudfront_arn)
+                    
+                    # Upload the static website files to the S3 bucket
+                    print(f"Uploading static website files to S3 bucket: {outputs['S3BucketName']}")
+                    upload_success = upload_static_website(outputs['S3BucketName'], region, config)
+                    if upload_success:
+                        print("Successfully uploaded static website files to S3 bucket.")
+                    else:
+                        print("Warning: Failed to upload static website files to S3 bucket.")
                 
                 return {
                     'status': 'success', 
@@ -527,7 +770,16 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
         # Wait for stack creation/update to complete
         print(f"Waiting for stack {operation} to complete...")
         waiter = cfn.get_waiter(f'stack_{operation}_complete')
-        waiter.wait(StackName=stack_name)
+        
+        # Configure the waiter with increased timeout for CloudFront distributions
+        # CloudFront can take 15-30 minutes to deploy, so we need to increase the wait time
+        waiter_config = {
+            'Delay': 30,  # Check every 30 seconds instead of the default 15
+            'MaxAttempts': 120  # Wait up to 60 minutes (120 * 30 seconds)
+        }
+        
+        print(f"Using extended waiter configuration: {waiter_config}")
+        waiter.wait(StackName=stack_name, WaiterConfig=waiter_config)
         
         # Get stack outputs
         stack_info = cfn.describe_stacks(StackName=stack_name)
@@ -564,6 +816,14 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                 
                 # Attach bucket policy
                 attach_bucket_policy(outputs['S3BucketName'], region, cloudfront_arn)
+            
+            # Upload the static website files to the S3 bucket
+            print(f"Uploading static website files to S3 bucket: {outputs['S3BucketName']}")
+            upload_success = upload_static_website(outputs['S3BucketName'], region, config)
+            if upload_success:
+                print("Successfully uploaded static website files to S3 bucket.")
+            else:
+                print("Warning: Failed to upload static website files to S3 bucket.")
         
         return {
             'status': 'success',

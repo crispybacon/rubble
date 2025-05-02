@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-AWS Infrastructure Report Tool
+AWS Resource Manager
 
-This script generates reports about deployed AWS infrastructure,
-focusing on cost analysis for spot instances. It also provides
-functionality to deploy CloudFormation templates for various solutions.
+This script manages AWS resources including generating reports about deployed infrastructure,
+focusing on cost analysis for spot instances. It also provides functionality to deploy
+CloudFormation templates for various solutions and manage S3 website content.
 """
 
 import argparse
@@ -16,12 +16,12 @@ import yaml
 import shutil
 from datetime import datetime
 from pathlib import Path
-from deploy_function import deploy_cloudformation_template, attach_bucket_policy, export_deployed_template
+from deploy_function import deploy_cloudformation_template, attach_bucket_policy, export_deployed_template, upload_static_website, update_stack_parameters
 
 
 def parse_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='AWS Infrastructure Report Tool')
+    parser = argparse.ArgumentParser(description='AWS Resource Manager')
     parser.add_argument('--region', type=str, help='AWS region to scan')
     parser.add_argument('--config', type=str, default='config.yaml',
                         help='Path to configuration file')
@@ -61,7 +61,6 @@ def load_config(config_path):
 
 
 
-
 def get_spot_price(ec2, instance_id):
     """
     Get the spot price for a specific instance.
@@ -94,10 +93,6 @@ def get_spot_price(ec2, instance_id):
     except Exception as e:
         print(f"Error getting spot price for instance {instance_id}: {e}")
         return None
-
-
-
-
 
 
 
@@ -172,110 +167,6 @@ def generate_report(region, instances_data):
     return report
 
 
-def upload_static_website(s3_bucket, region, config=None):
-    """
-    Upload static website content to an S3 bucket.
-    
-    Args:
-        s3_bucket: Name of the S3 bucket
-        region: AWS region
-        config: Configuration dictionary
-        
-    Returns:
-        bool: True if upload was successful, False otherwise
-    """
-    try:
-        # Initialize S3 client
-        s3 = boto3.client('s3', region_name=region)
-        
-        # Get the content directory from config if available
-        static_website_dir = 'iac/static_website'
-        content_dir_path = None
-        
-        if config and 'solutions' in config and 'static_website' in config['solutions']:
-            solution_config = config['solutions']['static_website']
-            if 'content_dir' in solution_config:
-                content_dir_path = solution_config['content_dir']
-        
-        # Check if the directory exists
-        website_dir = Path(static_website_dir)
-        if not website_dir.exists() or not website_dir.is_dir():
-            print(f"Error: Static website directory '{static_website_dir}' not found.")
-            return False
-        
-        # Use the content directory from config if specified, otherwise check for a content subdirectory
-        if content_dir_path:
-            content_dir = Path(content_dir_path)
-            if content_dir.exists() and content_dir.is_dir():
-                website_dir = content_dir
-                print(f"Using content directory from config: {content_dir}")
-            else:
-                print(f"Content directory from config not found: {content_dir_path}")
-                # Fall back to checking for a content subdirectory
-                content_subdir = website_dir / 'content'
-                if content_subdir.exists() and content_subdir.is_dir():
-                    website_dir = content_subdir
-                    print(f"Using content subdirectory: {content_subdir}")
-                else:
-                    print(f"Content subdirectory not found, using main directory: {website_dir}")
-        else:
-            # Check if the content directory exists, if not, use the main directory
-            content_subdir = website_dir / 'content'
-            if content_subdir.exists() and content_subdir.is_dir():
-                website_dir = content_subdir
-                print(f"Using content subdirectory: {content_subdir}")
-            else:
-                print(f"Content subdirectory not found, using main directory: {website_dir}")
-        
-        # Check if the bucket exists
-        try:
-            s3.head_bucket(Bucket=s3_bucket)
-        except Exception as e:
-            print(f"Error: S3 bucket '{s3_bucket}' not accessible: {e}")
-            return False
-        
-        # Upload all files in the directory, excluding CloudFormation templates
-        file_count = 0
-        for file_path in website_dir.glob('**/*'):
-            if file_path.is_file():
-                # Skip CloudFormation template files
-                if file_path.suffix.lower() in ['.yaml', '.yml', '.json'] and ('cloudformation' in file_path.name.lower() or 'template' in file_path.name.lower()):
-                    print(f"Skipping CloudFormation template: {file_path}")
-                    continue
-                
-                # Calculate the relative path for the S3 key
-                relative_path = file_path.relative_to(website_dir)
-                s3_key = f"static_website/{relative_path}"
-                
-                # Determine content type based on file extension
-                content_type = 'application/octet-stream'  # Default
-                if file_path.suffix == '.html':
-                    content_type = 'text/html'
-                elif file_path.suffix == '.css':
-                    content_type = 'text/css'
-                elif file_path.suffix in ['.jpg', '.jpeg']:
-                    content_type = 'image/jpeg'
-                elif file_path.suffix == '.png':
-                    content_type = 'image/png'
-                
-                # Upload the file
-                print(f"Uploading {file_path} to s3://{s3_bucket}/{s3_key}")
-                with open(file_path, 'rb') as file_data:
-                    s3.put_object(
-                        Bucket=s3_bucket,
-                        Key=s3_key,
-                        Body=file_data,
-                        ContentType=content_type
-                    )
-                file_count += 1
-        
-        print(f"Successfully uploaded {file_count} files to s3://{s3_bucket}/static_website/")
-        return True
-    except Exception as e:
-        print(f"Error uploading static website content: {e}")
-        return False
-
-
 def save_report(report, output_dir, prefix):
     """Save the report to a JSON file."""
     # Create output directory if it doesn't exist
@@ -296,7 +187,7 @@ def save_report(report, output_dir, prefix):
 def display_report(report):
     """Display the report in a formatted way in the console."""
     print("\n" + "="*80)
-    print(f"AWS INFRASTRUCTURE REPORT - {report['region']}")
+    print(f"AWS RESOURCE REPORT - {report['region']}")
     print(f"Generated at: {report['timestamp']}")
     print("="*80)
     
@@ -325,7 +216,7 @@ def display_report(report):
 
 
 def main():
-    """Main function to run the AWS infrastructure report."""
+    """Main function to run the AWS resource manager."""
     # Parse arguments and load configuration
     args = parse_arguments()
     config = load_config(args.config)
@@ -335,7 +226,7 @@ def main():
     
     # Get output settings
     output_dir = config.get('output', {}).get('report_dir', 'reports')
-    report_prefix = config.get('output', {}).get('report_prefix', 'aws_infra_report')
+    report_prefix = config.get('output', {}).get('report_prefix', 'aws_resource_report')
     
     # Check if we need to attach a bucket policy
     if args.attach_bucket_policy:
@@ -416,6 +307,21 @@ def main():
         if solution_name == 'messaging' and 'outputs' in result and 'ApiEndpoint' in result['outputs']:
             print("\nUpdating static website with messaging API endpoint...")
             try:
+                # First, update the static website stack with the messaging stack name
+                if args.static_website_stack:
+                    print(f"\nUpdating static website stack '{args.static_website_stack}' with messaging stack name '{stack_name}'...")
+                    update_result = update_stack_parameters(
+                        args.static_website_stack,
+                        region,
+                        {'MessagingStackName': stack_name},
+                        config
+                    )
+                    
+                    if update_result['status'] == 'error':
+                        print(f"Warning: Failed to update static website stack with messaging stack name: {update_result['message']}")
+                    else:
+                        print(f"Successfully updated static website stack with messaging stack name.")
+                
                 # Import the update_website module
                 import update_website
                 
@@ -442,7 +348,7 @@ def main():
         # Provide instructions for exporting the template
         if not args.export_template:
             print("\nTIP: You can export the deployed template for future reference with:")
-            print(f"python aws_infra_report.py --deploy {solution_name} --stack_name {stack_name} --export_template")
+            print(f"python aws_resource_manager.py --deploy {solution_name} --stack_name {stack_name} --export_template")
             
         # If only deploying, exit after deployment
         if not args.upload_resume and not args.region:
@@ -511,26 +417,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
