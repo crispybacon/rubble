@@ -43,8 +43,17 @@ class TestMessagingOriginatorId(unittest.TestCase):
         }
 
     @patch('deploy_function.boto3.client')
-    def test_sms_originator_id_parameter(self, mock_boto3_client):
-        """Test that SmsOriginatorId parameter is passed to CloudFormation"""
+    def test_messaging_template_empty(self, mock_boto3_client):
+        """Test that the messaging template is empty"""
+        # Load the template
+        template_path = 'iac/messaging/template.yaml'
+        with open(template_path, 'r') as f:
+            template_content = f.read()
+            
+        # Check that the template content contains the empty template markers
+        self.assertIn('Empty AWS End User Messaging Infrastructure Template', template_content)
+        self.assertIn('No resources defined', template_content)
+        
         # Mock the CloudFormation client
         mock_cfn = MagicMock()
         mock_boto3_client.return_value = mock_cfn
@@ -60,18 +69,6 @@ class TestMessagingOriginatorId(unittest.TestCase):
         
         # Check that the result is successful
         self.assertEqual(result['status'], 'dry_run')
-        
-        # Check that the SmsOriginatorId parameter is included in the parameters
-        parameters = result['parameters']
-        sms_originator_id_param = None
-        for param in parameters:
-            if param['ParameterKey'] == 'SmsOriginatorId':
-                sms_originator_id_param = param
-                break
-        
-        # Assert that the parameter exists and has the correct value
-        self.assertIsNotNone(sms_originator_id_param, "SmsOriginatorId parameter not found")
-        self.assertEqual(sms_originator_id_param['ParameterValue'], 'TestSender')
 
 if __name__ == "__main__":
     unittest.main()

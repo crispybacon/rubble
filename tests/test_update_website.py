@@ -140,6 +140,13 @@ class TestUpdateWebsite(unittest.TestCase):
         # Override the content_dir in the test config
         self.test_config['solutions']['static_website']['content_dir'] = str(self.content_path)
         
+        # Add email configuration to the test config
+        self.test_config['messaging'] = {
+            'email': {
+                'destination': 'test@example.com'
+            }
+        }
+        
         # Test the function
         api_endpoint = 'https://api.example.com/prod/contact'
         result = update_website.update_index_html(api_endpoint, self.test_config)
@@ -154,6 +161,11 @@ class TestUpdateWebsite(unittest.TestCase):
         # Check that the API endpoint was updated
         self.assertIn(f"fetch('{api_endpoint}'", updated_content)
         self.assertNotIn("fetch('${ApiEndpoint}'", updated_content)
+        
+        # Check that the email address was updated if it exists in the file
+        if '${EmailAddress}' in self.test_html:
+            self.assertIn("test@example.com", updated_content)
+            self.assertNotIn("${EmailAddress}", updated_content)
         
         # Test with non-existent content directory
         self.test_config['solutions']['static_website']['content_dir'] = 'non_existent_dir'
@@ -208,7 +220,7 @@ class TestUpdateWebsite(unittest.TestCase):
         
         # Check that the messaging solution was added
         self.assertIn("AWS End User Messaging", updated_content)
-        self.assertIn("SMS and Email Contact Forms", updated_content)
+        self.assertIn("Direct email contact via mailto link", updated_content)
         
         # Test adding it again (should not duplicate)
         result = update_website.add_messaging_to_solution_demos(self.test_config)

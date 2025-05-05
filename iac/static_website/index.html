@@ -356,14 +356,9 @@
                         Features responsive design with collapsible sections
                       </p>
                     </li>
-                    <li>
-                      <p>
-                        Protected by AWS WAF with managed rule sets
-                      </p>
-                    </li>
                   </ul>
                   <p>
-                    <span class="bolded">Technologies: </span>AWS S3, CloudFront, WAF, CloudWatch Logs, HTML/CSS/JavaScript
+                    <span class="bolded">Technologies: </span>AWS S3, CloudFront, HTML/CSS/JavaScript
                   </p>
                 </div>
               </div>
@@ -380,12 +375,12 @@
               <div class="job-content">
                 <div class="projectName bolded">
                   <span>
-                    SMS and Email Contact Forms
+                    SMS Contact Form
                   </span>
                 </div>
                 <div class="smallText">
                   <p>
-                    A secure messaging infrastructure for handling contact form submissions via SMS and email.
+                    A secure messaging infrastructure for handling contact form submissions via SMS.
                   </p>
                   <ul>
                     <li>
@@ -405,7 +400,7 @@
                     </li>
                   </ul>
                   <p>
-                    <span class="bolded">Technologies: </span>AWS Lambda, API Gateway, SNS, SES, PinpointSMSVoice, KMS
+                    <span class="bolded">Technologies: </span>AWS Lambda, API Gateway, SNS, PinpointSMSVoice, KMS
                   </p>
                 </div>
               </div>
@@ -416,6 +411,9 @@
     </div>
   </page> 
   <script>
+    // Email address from config.yaml
+    const emailAddress = 'jesse.bacon@flatstoneservices.com';
+    
     document.addEventListener('DOMContentLoaded', function() {
       // Get all contact icons
       const contactIcons = document.querySelectorAll('.contact-icon');
@@ -427,38 +425,73 @@
           const purpose = this.getAttribute('title');
           const isEmail = purpose.includes('Email');
           
-          // Create a styled contact form
+          if (isEmail) {
+            // For email, create a styled popup in the middle of the screen
+            // Using the global emailAddress variable defined at the top of the script
+            
+            const emailPopup = document.createElement('div');
+            emailPopup.className = 'custom-alert';
+            emailPopup.innerHTML = `
+              <div class="alert-content">
+                <div class="alert-header">
+                  <i class="${this.className.split(' ')[1]} ${this.className.split(' ')[2]}" aria-hidden="true"></i>
+                  <span>Email Contact Information</span>
+                  <span class="close-btn">&times;</span>
+                </div>
+                <div class="alert-body">
+                  <p>I can be reached at the email address:</p>
+                  <p><a href="mailto:jesse.bacon@flatstoneservices.com?subject=Mail from JesseBacon.US"><strong>${emailAddress}</strong></a></p>
+                </div>
+              </div>
+            `;
+            
+            // Add the popup to the document
+            document.body.appendChild(emailPopup);
+            
+            // Add click event to close button
+            const closeBtn = emailPopup.querySelector('.close-btn');
+            closeBtn.addEventListener('click', function() {
+              document.body.removeChild(emailPopup);
+            });
+            
+            // Add click event to the email button
+            const emailBtn = emailPopup.querySelector('#open-email-btn');
+            emailBtn.addEventListener('click', function() {
+              window.location.href = `mailto:${emailAddress}?subject=Mail from JesseBacon.US`;
+            });
+            
+            // Auto-close the popup after 8 seconds
+            setTimeout(() => {
+              if (document.body.contains(emailPopup)) {
+                document.body.removeChild(emailPopup);
+              }
+            }, 8000);
+            
+            return; // Exit early for email
+          }
+          
+          // For SMS, create a styled contact form (keep existing SMS functionality)
           const contactForm = document.createElement('div');
           contactForm.className = 'custom-alert';
           contactForm.innerHTML = `
             <div class="alert-content">
               <div class="alert-header">
                 <i class="${this.className.split(' ')[1]} ${this.className.split(' ')[2]}" aria-hidden="true"></i>
-                <span>${isEmail ? 'Email Contact Form' : 'SMS Contact Form'}</span>
+                <span>SMS Contact Form</span>
                 <span class="close-btn">&times;</span>
               </div>
               <div class="alert-body">
-                <form id="${isEmail ? 'email-form' : 'sms-form'}">
+                <form id="sms-form">
                   <div class="form-group">
                     <label for="name">Your Name:</label>
                     <input type="text" id="name" name="name" required>
                   </div>
-                  ${isEmail ? `
-                  <div class="form-group">
-                    <label for="email">Your Email:</label>
-                    <input type="email" id="email" name="email" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="subject">Subject:</label>
-                    <input type="text" id="subject" name="subject" required>
-                  </div>
-                  ` : ''}
                   <div class="form-group">
                     <label for="message">Message:</label>
                     <textarea id="message" name="message" rows="5" required></textarea>
                   </div>
                   <div class="form-actions">
-                    <button type="submit" class="submit-btn">Send ${isEmail ? 'Email' : 'SMS'}</button>
+                    <button type="submit" class="submit-btn">Send SMS</button>
                   </div>
                   <div id="form-status" class="form-status"></div>
                 </form>
@@ -468,105 +501,6 @@
           
           // Add the contact form to the document
           document.body.appendChild(contactForm);
-          
-          // Add styles to the contact form
-          const style = document.createElement('style');
-          style.textContent = `
-            .custom-alert {
-              position: fixed;
-              top: 0;
-              left: 0;
-              width: 100%;
-              height: 100%;
-              background-color: rgba(0, 0, 0, 0.5);
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              z-index: 1000;
-            }
-            .alert-content {
-              background-color: white;
-              border-radius: 0.3cm;
-              width: 80%;
-              max-width: 10cm;
-              box-shadow: 0 0.1cm 0.3cm rgba(0, 0, 0, 0.3);
-              overflow: hidden;
-              border: 0.05cm solid #FF8C00;
-            }
-            .alert-header {
-              background-color: #FF8C00;
-              color: white;
-              padding: 0.3cm;
-              display: flex;
-              align-items: center;
-              font-weight: bold;
-              font-family: 'Source Sans Pro', sans-serif;
-            }
-            .alert-header i {
-              margin-right: 0.3cm;
-            }
-            .alert-body {
-              padding: 0.5cm;
-              font-family: 'Source Sans Pro', sans-serif;
-            }
-            .close-btn {
-              margin-left: auto;
-              cursor: pointer;
-              font-size: 0.7cm;
-            }
-            .form-group {
-              margin-bottom: 0.4cm;
-            }
-            .form-group label {
-              display: block;
-              margin-bottom: 0.1cm;
-              font-weight: bold;
-            }
-            .form-group input,
-            .form-group textarea {
-              width: 100%;
-              padding: 0.2cm;
-              border: 1px solid #ccc;
-              border-radius: 0.1cm;
-              font-family: 'Source Sans Pro', sans-serif;
-              font-size: 0.35cm;
-            }
-            .form-actions {
-              text-align: right;
-              margin-top: 0.4cm;
-            }
-            .submit-btn {
-              background-color: #FF8C00;
-              color: white;
-              border: none;
-              padding: 0.2cm 0.4cm;
-              border-radius: 0.1cm;
-              cursor: pointer;
-              font-family: 'Source Sans Pro', sans-serif;
-              font-weight: bold;
-            }
-            .submit-btn:hover {
-              background-color: #E67E00;
-            }
-            .form-status {
-              margin-top: 0.3cm;
-              padding: 0.2cm;
-              border-radius: 0.1cm;
-              text-align: center;
-              display: none;
-            }
-            .form-status.success {
-              background-color: #d4edda;
-              color: #155724;
-              display: block;
-            }
-            .form-status.error {
-              background-color: #f8d7da;
-              color: #721c24;
-              display: block;
-            }
-          `;
-          document.head.appendChild(style);
           
           // Add click event to close button
           const closeBtn = contactForm.querySelector('.close-btn');

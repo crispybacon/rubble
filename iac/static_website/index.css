@@ -403,9 +403,114 @@ page[size="A4"] {
 }
 /*End Layout*/
 
+/* Popup Styles for Contact Forms */
+.custom-alert {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
 
+.alert-content {
+  background-color: white;
+  border-radius: 0.3cm;
+  width: 80%;
+  max-width: 10cm;
+  box-shadow: 0 0.1cm 0.3cm rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  border: 0.05cm solid #FF8C00;
+}
 
+.alert-header {
+  background-color: #FF8C00;
+  color: white;
+  padding: 0.3cm;
+  display: flex;
+  align-items: center;
+  font-weight: bold;
+  font-family: 'Source Sans Pro', sans-serif;
+}
 
+.alert-header i {
+  margin-right: 0.3cm;
+}
+
+.alert-body {
+  padding: 0.5cm;
+  font-family: 'Source Sans Pro', sans-serif;
+}
+
+.close-btn {
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 0.7cm;
+}
+
+.form-group {
+  margin-bottom: 0.4cm;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.1cm;
+  font-weight: bold;
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 0.2cm;
+  border: 1px solid #ccc;
+  border-radius: 0.1cm;
+  font-family: 'Source Sans Pro', sans-serif;
+  font-size: 0.35cm;
+}
+
+.form-actions {
+  text-align: center;
+  margin-top: 0.4cm;
+}
+
+.submit-btn {
+  background-color: #FF8C00;
+  color: white;
+  border: none;
+  padding: 0.2cm 0.4cm;
+  border-radius: 0.1cm;
+  cursor: pointer;
+  font-family: 'Source Sans Pro', sans-serif;
+  font-weight: bold;
+}
+
+.submit-btn:hover {
+  background-color: #E67E00;
+}
+
+.form-status {
+  margin-top: 0.3cm;
+  padding: 0.2cm;
+  border-radius: 0.1cm;
+  text-align: center;
+  display: none;
+}
+
+.form-status.success {
+  background-color: #d4edda;
+  color: #155724;
+  display: block;
+}
+
+.form-status.error {
+  background-color: #f8d7da;
+  color: #721c24;
+  display: block;
+}
 
 
 
