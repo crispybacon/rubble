@@ -104,6 +104,10 @@ def get_streaming_endpoints(stack_name, region):
                 endpoints['input'] = output['OutputValue']
             elif output['OutputKey'] == 'VodBucketName':
                 endpoints['vod'] = output['OutputValue']
+            elif output['OutputKey'] == 'CloudFrontDistributionId':
+                endpoints['cloudfront_id'] = output['OutputValue']
+            elif output['OutputKey'] == 'CloudFrontDistributionDomainName':
+                endpoints['cloudfront_domain'] = output['OutputValue']
         
         if not endpoints:
             print(f"Warning: Streaming endpoints not found in stack outputs for {stack_name}")

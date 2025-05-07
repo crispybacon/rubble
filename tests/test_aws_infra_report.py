@@ -582,7 +582,9 @@ class TestAWSInfraReport(unittest.TestCase):
                 'HlsEndpointUrl': 'https://example.com/hls/index.m3u8',
                 'DashEndpointUrl': 'https://example.com/dash/index.mpd',
                 'MediaLiveInputUrl': 'rtmp://example.com/live',
-                'VodBucketName': 'test-vod-bucket'
+                'VodBucketName': 'test-vod-bucket',
+                'CloudFrontDistributionId': 'EXAMPLEID',
+                'CloudFrontDistributionDomainName': 'example-distribution.cloudfront.net'
             }
         }
         

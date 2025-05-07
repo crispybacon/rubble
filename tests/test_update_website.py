@@ -135,6 +135,57 @@ class TestUpdateWebsite(unittest.TestCase):
         api_endpoint = update_website.get_api_endpoint('test-stack', 'us-west-2')
         self.assertIsNone(api_endpoint)
 
+    @patch('boto3.client')
+    def test_get_streaming_endpoints(self, mock_boto_client):
+        """Test getting streaming endpoints from CloudFormation stack outputs."""
+        # Mock CloudFormation client
+        mock_cfn = MagicMock()
+        mock_boto_client.return_value = mock_cfn
+        
+        # Mock describe_stacks response
+        mock_cfn.describe_stacks.return_value = {
+            'Stacks': [{
+                'Outputs': [
+                    {'OutputKey': 'HlsEndpointUrl', 'OutputValue': 'https://example.com/hls/index.m3u8'},
+                    {'OutputKey': 'DashEndpointUrl', 'OutputValue': 'https://example.com/dash/index.mpd'},
+                    {'OutputKey': 'MediaLiveInputUrl', 'OutputValue': 'rtmp://example.com/live'},
+                    {'OutputKey': 'VodBucketName', 'OutputValue': 'test-vod-bucket'},
+                    {'OutputKey': 'CloudFrontDistributionId', 'OutputValue': 'EXAMPLEID'},
+                    {'OutputKey': 'CloudFrontDistributionDomainName', 'OutputValue': 'example-distribution.cloudfront.net'}
+                ]
+            }]
+        }
+        
+        # Test the function
+        endpoints = update_website.get_streaming_endpoints('test-stack', 'us-west-2')
+        self.assertEqual(endpoints['hls'], 'https://example.com/hls/index.m3u8')
+        self.assertEqual(endpoints['dash'], 'https://example.com/dash/index.mpd')
+        self.assertEqual(endpoints['input'], 'rtmp://example.com/live')
+        self.assertEqual(endpoints['vod'], 'test-vod-bucket')
+        self.assertEqual(endpoints['cloudfront_id'], 'EXAMPLEID')
+        self.assertEqual(endpoints['cloudfront_domain'], 'example-distribution.cloudfront.net')
+        
+        # Verify CloudFormation client was called correctly
+        mock_boto_client.assert_called_with('cloudformation', region_name='us-west-2')
+        mock_cfn.describe_stacks.assert_called_with(StackName='test-stack')
+        
+        # Test with missing endpoints
+        mock_cfn.describe_stacks.return_value = {
+            'Stacks': [{
+                'Outputs': [
+                    {'OutputKey': 'OtherOutput', 'OutputValue': 'some-value'}
+                ]
+            }]
+        }
+        
+        endpoints = update_website.get_streaming_endpoints('test-stack', 'us-west-2')
+        self.assertIsNone(endpoints)
+        
+        # Test with exception
+        mock_cfn.describe_stacks.side_effect = Exception('Test exception')
+        endpoints = update_website.get_streaming_endpoints('test-stack', 'us-west-2')
+        self.assertIsNone(endpoints)
+
     def test_update_index_html(self):
         """Test updating index.html with API endpoint."""
         # Override the content_dir in the test config
