@@ -537,6 +537,111 @@ class TestAWSInfraReport(unittest.TestCase):
             'test-bucket', 'us-west-2', config_arg
         )
         
+    @patch('aws_infra_report.deploy_cloudformation_template')
+    @patch('update_website.add_streaming_media_to_solution_demos')
+    @patch('update_website.add_streaming_media_buttons')
+    @patch('aws_infra_report.upload_static_website')
+    @patch('aws_infra_report.load_config')
+    @patch('aws_infra_report.parse_arguments')
+    def test_main_with_streaming_media_deploy(self, mock_parse_arguments, mock_load_config, 
+                                           mock_upload_static_website, mock_add_buttons, 
+                                           mock_add_solution_demos, mock_deploy_cloudformation):
+        """Test main function with streaming media solution deployment."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.upload_resume = False
+        mock_args.region = 'us-west-2'
+        mock_args.deploy = 'streaming_media'
+        mock_args.stack_name = 'test-streaming-media-stack'
+        mock_args.static_website_stack = 'test-static-website-stack'
+        mock_args.export_template = False
+        mock_args.update = False
+        mock_args.attach_bucket_policy = False
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = {
+            'region': 'us-west-2',
+            's3': {'bucket': 'test-bucket'},
+            'solutions': {
+                'streaming_media': {
+                    'template_path': 'iac/streaming_media/template.yaml',
+                    'parameters': {
+                        'LiveInputType': 'RTMP_PUSH',
+                        'LiveInputWhitelistCidr': '0.0.0.0/0'
+                    }
+                }
+            }
+        }
+        
+        # Mock deploy function to return success with streaming endpoints
+        mock_deploy_cloudformation.return_value = {
+            'status': 'success',
+            'message': 'Stack create completed successfully!',
+            'outputs': {
+                'HlsEndpointUrl': 'https://example.com/hls/index.m3u8',
+                'DashEndpointUrl': 'https://example.com/dash/index.mpd',
+                'MediaLiveInputUrl': 'rtmp://example.com/live',
+                'VodBucketName': 'test-vod-bucket'
+            }
+        }
+        
+        # Mock add_streaming_media_to_solution_demos and add_streaming_media_buttons to return True
+        mock_add_solution_demos.return_value = True
+        mock_add_buttons.return_value = True
+        
+        # Mock upload_static_website to return True
+        mock_upload_static_website.return_value = True
+        
+        # Test the function
+        with patch('aws_infra_report.boto3.client'), \
+             patch('aws_infra_report.get_instance_details'), \
+             patch('aws_infra_report.get_spot_price'), \
+             patch('aws_infra_report.generate_report'), \
+             patch('aws_infra_report.save_report'), \
+             patch('aws_infra_report.display_report'), \
+             patch('update_website.get_streaming_endpoints') as mock_get_endpoints:
+            
+            # Mock get_streaming_endpoints to return the streaming endpoints
+            mock_get_endpoints.return_value = {
+                'hls': 'https://example.com/hls/index.m3u8',
+                'dash': 'https://example.com/dash/index.mpd',
+                'input': 'rtmp://example.com/live',
+                'vod': 'test-vod-bucket'
+            }
+            
+            aws_infra_report.main()
+        
+        # Check that deploy_cloudformation_template was called with the correct arguments
+        mock_deploy_cloudformation.assert_called_once()
+        call_args = mock_deploy_cloudformation.call_args[0]
+        self.assertEqual(call_args[0], 'streaming_media')
+        self.assertEqual(call_args[1], 'test-streaming-media-stack')
+        self.assertEqual(call_args[2], 'us-west-2')
+        
+        # Check that the StaticWebsiteStackName parameter was added to the config
+        config_arg = mock_deploy_cloudformation.call_args[0][3]
+        self.assertEqual(
+            config_arg['solutions']['streaming_media']['parameters']['StaticWebsiteStackName'],
+            'test-static-website-stack'
+        )
+        
+        # Check that add_streaming_media_to_solution_demos was called
+        mock_add_solution_demos.assert_called_once_with(config_arg)
+        
+        # Check that add_streaming_media_buttons was called with the correct arguments
+        mock_add_buttons.assert_called_once()
+        buttons_call_args = mock_add_buttons.call_args[0]
+        self.assertEqual(buttons_call_args[0]['hls'], 'https://example.com/hls/index.m3u8')
+        self.assertEqual(buttons_call_args[0]['dash'], 'https://example.com/dash/index.mpd')
+        self.assertEqual(buttons_call_args[0]['input'], 'rtmp://example.com/live')
+        self.assertEqual(buttons_call_args[0]['vod'], 'test-vod-bucket')
+        
+        # Check that upload_static_website was called with the correct arguments
+        mock_upload_static_website.assert_called_once_with(
+            'test-bucket', 'us-west-2', config_arg
+        )
+        
     @patch('aws_infra_report.load_config')
     @patch('aws_infra_report.parse_arguments')
     def test_main_with_messaging_deploy_missing_static_website_stack(self, mock_parse_arguments, mock_load_config):
@@ -574,6 +679,50 @@ class TestAWSInfraReport(unittest.TestCase):
             
             # Check that the error message was printed
             mock_print.assert_any_call("Error: Static website stack name is required when deploying messaging solution. Please provide it via --static_website_stack option.")
+        )
+
+
+    @patch('aws_infra_report.load_config')
+    @patch('aws_infra_report.parse_arguments')
+    def test_main_with_streaming_media_deploy_missing_static_website_stack(self, mock_parse_arguments, mock_load_config):
+        """Test main function with streaming media solution deployment but missing static_website_stack parameter."""
+        # Mock arguments
+        mock_args = MagicMock()
+        mock_args.upload_resume = False
+        mock_args.region = 'us-west-2'
+        mock_args.deploy = 'streaming_media'
+        mock_args.stack_name = 'test-streaming-media-stack'
+        mock_args.static_website_stack = None  # Missing static_website_stack
+        mock_args.export_template = False
+        mock_args.update = False
+        mock_args.attach_bucket_policy = False
+        mock_parse_arguments.return_value = mock_args
+        
+        # Mock config
+        mock_load_config.return_value = {
+            'region': 'us-west-2',
+            's3': {'bucket': 'test-bucket'},
+            'solutions': {
+                'streaming_media': {
+                    'template_path': 'iac/streaming_media/template.yaml',
+                    'parameters': {
+                        'LiveInputType': 'RTMP_PUSH',
+                        'LiveInputWhitelistCidr': '0.0.0.0/0'
+                    }
+                }
+            }
+        }
+        
+        # Test the function - should exit with error
+        with patch('sys.exit') as mock_exit, \
+             patch('builtins.print') as mock_print:
+            aws_infra_report.main()
+            
+            # Check that sys.exit was called with error code 1
+            mock_exit.assert_called_once_with(1)
+            
+            # Check that the error message was printed
+            mock_print.assert_any_call("Error: Static website stack name is required when deploying streaming media solution. Please provide it via --static_website_stack option.")
         )
 
 

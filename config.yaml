@@ -40,6 +40,17 @@ solutions:
     # Default parameters for CloudFormation deployment
     parameters:
       # No additional parameters needed as they are pulled from the messaging section
+  
+  # Streaming media solution for live streaming and video on demand
+  streaming_media:
+    # Template location
+    template_path: "iac/streaming_media/template.yaml"
+    # Directory for storing deployed templates
+    deployed_dir: "iac/deployed"
+    # Default parameters for CloudFormation deployment
+    parameters:
+      LiveInputType: "RTMP_PUSH"
+      LiveInputWhitelistCidr: "173.72.178.22/32"
 
 # S3 settings
 s3:

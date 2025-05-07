@@ -1,0 +1,202 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SMS Quick Start configuration set template
+Parameters:
+  CloudWatchLogsGroupName:
+    Description: Name of your CloudWatch Logs log group
+    Type: String
+  SNSTopicName:
+    Description: Name of your SNS topic
+    Type: String
+  FirehoseStreamName:
+    Description: Name of your Firehose delivery stream
+    Type: String
+  IAMRoleName:
+    Description: Name of your IAM role
+    Type: String
+Resources:
+  SmsConfigurationSetBucket:
+    Type: AWS::S3::Bucket
+  SmsCloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Ref: CloudWatchLogsGroupName
+  SmsSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName:
+        Ref: SNSTopicName
+  SmsSQSQueue:
+    Type: AWS::SQS::Queue
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sqs
+      Endpoint:
+        Fn::GetAtt:
+        - SmsSQSQueue
+        - Arn
+      Region:
+        Ref: AWS::Region
+      TopicArn:
+        Ref: SmsSNSTopic
+  SqsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: MyQueuePolicy
+        Statement:
+        - Sid: Allow-SNS-SendMessage
+          Effect: Allow
+          Principal: "*"
+          Action:
+          - sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - SmsSQSQueue
+            - Arn
+          Condition:
+            ArnEquals:
+              aws:SourceArn:
+                Ref: SmsSNSTopic
+      Queues:
+      - Ref: SmsSQSQueue
+  SmsSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Publisher
+          Effect: Allow
+          Principal:
+            Service:
+            - sms-voice.amazonaws.com
+          Action: sns:Publish
+          Resource:
+            Ref: SmsSNSTopic
+      Topics:
+      - Ref: SmsSNSTopic
+  ConfigSetFirehose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName:
+        Ref: FirehoseStreamName
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        BucketARN:
+          Fn::GetAtt:
+          - SmsConfigurationSetBucket
+          - Arn
+        BufferingHints:
+          IntervalInSeconds: '300'
+          SizeInMBs: '128'
+        CompressionFormat: UNCOMPRESSED
+        Prefix: aws-sms-config-sets-data/
+        RoleARN:
+          Fn::GetAtt:
+          - FirehoseDeliveryRole
+          - Arn
+  FirehoseDeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Principal:
+            Service:
+            - firehose.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              sts:ExternalId:
+                Ref: AWS::AccountId
+  FirehoseDeliveryPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: firehose_delivery_policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:AbortMultipartUpload
+          - s3:GetBucketLocation
+          - s3:GetObject
+          - s3:ListBucket
+          - s3:ListBucketMultipartUploads
+          - s3:PutObject
+          Resource:
+          - Fn::GetAtt:
+            - SmsConfigurationSetBucket
+            - Arn
+          - Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - SmsConfigurationSetBucket
+                - Arn
+              - "*"
+      Roles:
+      - Ref: FirehoseDeliveryRole
+  SmsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Ref: IAMRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Principal:
+            Service:
+            - sms-voice.amazonaws.com
+          Action: sts:AssumeRole
+  SmsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: aws_sms_config_set_policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - firehose:PutRecord
+          Resource:
+          - Fn::GetAtt:
+            - ConfigSetFirehose
+            - Arn
+        - Effect: Allow
+          Action:
+          - logs:PutLogEvents
+          - logs:DescribeLogStreams
+          - logs:CreateLogStream
+          Resource:
+          - Fn::GetAtt:
+            - SmsCloudWatchLogGroup
+            - Arn
+      Roles:
+      - Ref: SmsRole
+Outputs:
+  DeliveryStreamArn:
+    Value:
+      Fn::GetAtt:
+      - ConfigSetFirehose
+      - Arn
+  SmsRoleArn:
+    Value:
+      Fn::GetAtt:
+      - SmsRole
+      - Arn
+  CloudWatchArn:
+    Value:
+      Fn::GetAtt:
+      - SmsCloudWatchLogGroup
+      - Arn
+  SNSArn:
+    Value:
+      Ref: SmsSNSTopic

@@ -306,6 +306,83 @@ This solution deploys the infrastructure needed for SMS and email contact forms 
 
 <!-- Additional solutions can be added here following the same pattern -->
 
+<details>
+<summary><strong>AWS Media Services</strong> - Live Streaming and Video on Demand with AWS Media Services</summary>
+
+### AWS Media Services Solution
+
+This solution deploys the infrastructure needed for live streaming and video on demand using AWS Media Services. The architecture includes:
+
+- AWS Elemental MediaLive for ingesting and transcoding live video
+- AWS Elemental MediaPackage for packaging and protecting live content
+- S3 bucket for storing VOD content
+- CloudFront for delivering both live streams and VOD content
+- Security groups for controlling access to the streaming infrastructure
+
+### Deployment Instructions
+
+1. Update the configuration in `config.yaml` with your preferred settings:
+   ```yaml
+   solutions:
+     streaming_media:
+       parameters:
+         LiveInputType: "RTMP_PUSH"  # Options: RTMP_PUSH, RTP_PUSH, URL_PULL
+         LiveInputWhitelistCidr: "0.0.0.0/0"  # Restrict this to your IP range for production
+   ```
+
+2. First, make sure you've deployed the static_website stack:
+   ```bash
+   python aws_resource_manager.py --deploy static_website --stack_name your-static-website-stack
+   ```
+
+3. Then deploy the streaming media CloudFormation stack:
+   ```bash
+   python aws_resource_manager.py --deploy streaming_media --stack_name your-streaming-media-stack --static_website_stack your-static-website-stack
+   ```
+
+4. The deployment will automatically update the static website with streaming media buttons and add the solution to the Solution Demonstrations section.
+
+5. If you need to update the streaming media solution later:
+   ```bash
+   python aws_resource_manager.py --deploy streaming_media --stack_name your-streaming-media-stack --static_website_stack your-static-website-stack --update
+   ```
+
+### Using the Streaming Media Solution
+
+#### Live Streaming
+
+1. To stream live content, use a streaming software like OBS Studio or FFmpeg to push to the MediaLive input URL provided in the CloudFormation outputs.
+2. Configure your streaming software with the following settings:
+   - Protocol: RTMP (or as configured in your deployment)
+   - URL: The MediaLive input URL from the CloudFormation outputs
+   - Stream key: As provided in the MediaLive input URL
+   - Video codec: H.264
+   - Audio codec: AAC
+   - Resolution: 1080p or 720p recommended
+   - Bitrate: 5 Mbps or as needed for your quality requirements
+
+3. On your website, click the "Live Stream" button to view the live stream.
+
+#### Video on Demand (VOD)
+
+1. Upload your video files to the S3 bucket created for VOD content (provided in the CloudFormation outputs).
+2. The videos will be automatically processed and made available for streaming.
+3. On your website, click the "Video on Demand" button to access the VOD content.
+
+### Security Considerations
+
+- The default configuration allows streaming input from any IP address (0.0.0.0/0). For production use, restrict the `LiveInputWhitelistCidr` parameter to your specific IP range.
+- All content is delivered via CloudFront with HTTPS for secure transmission.
+- Consider implementing token-based authentication for sensitive content.
+
+### Troubleshooting
+
+- If the live stream doesn't appear, check that your streaming software is correctly configured and connected to the MediaLive input URL.
+- For VOD issues, verify that the video files are properly uploaded to the S3 bucket and have the correct permissions.
+- Check CloudWatch Logs for MediaLive and MediaPackage for any error messages.
+
+</details>
+
 
 
 

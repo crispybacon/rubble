@@ -29,7 +29,7 @@ def parse_arguments():
                         help='Upload static website content to S3 bucket')
     parser.add_argument('--s3_bucket', type=str,
                         help='S3 bucket name for resume upload (overrides config file)')
-    parser.add_argument('--deploy', type=str, choices=['static_website', 'messaging'],
+    parser.add_argument('--deploy', type=str, choices=['static_website', 'messaging', 'streaming_media'],
                         help='Deploy a CloudFormation template for the specified solution')
     parser.add_argument('--update', action='store_true',
                         help='Update an existing CloudFormation stack with changes')
@@ -39,6 +39,8 @@ def parse_arguments():
                         help='CloudFormation stack name for deployment')
     parser.add_argument('--static_website_stack', type=str,
                         help='Name of the static website stack (required when deploying messaging solution)')
+    parser.add_argument('--streaming_stack', type=str,
+                        help='Name of the streaming media stack (required when deploying streaming media solution)')
     parser.add_argument('--attach_bucket_policy', action='store_true',
                         help='Attach bucket policy to allow CloudFront to access the S3 bucket')
     parser.add_argument('--cloudfront_distribution_id', type=str,
@@ -277,6 +279,11 @@ def main():
             print("Error: Static website stack name is required when deploying messaging solution. Please provide it via --static_website_stack option.")
             sys.exit(1)
             
+        # Check if static_website_stack is provided when deploying streaming media solution
+        if solution_name == 'streaming_media' and not args.static_website_stack:
+            print("Error: Static website stack name is required when deploying streaming media solution. Please provide it via --static_website_stack option.")
+            sys.exit(1)
+            
         # Add static_website_stack to parameters if provided
         if solution_name == 'messaging' and args.static_website_stack:
             if 'solutions' not in config:
@@ -286,6 +293,16 @@ def main():
             if 'parameters' not in config['solutions']['messaging'] or config['solutions']['messaging']['parameters'] is None:
                 config['solutions']['messaging']['parameters'] = {}
             config['solutions']['messaging']['parameters']['StaticWebsiteStackName'] = args.static_website_stack
+            
+        # Add static_website_stack to parameters for streaming media solution
+        if solution_name == 'streaming_media' and args.static_website_stack:
+            if 'solutions' not in config:
+                config['solutions'] = {}
+            if 'streaming_media' not in config['solutions']:
+                config['solutions']['streaming_media'] = {}
+            if 'parameters' not in config['solutions']['streaming_media'] or config['solutions']['streaming_media']['parameters'] is None:
+                config['solutions']['streaming_media']['parameters'] = {}
+            config['solutions']['streaming_media']['parameters']['StaticWebsiteStackName'] = args.static_website_stack
         
         if args.update:
             print(f"Updating CloudFormation stack '{stack_name}' for solution '{solution_name}'...")
@@ -344,6 +361,57 @@ def main():
                         print("Warning: Failed to upload updated static website content.")
             except Exception as e:
                 print(f"Warning: Failed to update static website: {e}")
+        
+        # If this is the streaming media solution, update the static website with the streaming endpoints
+        if solution_name == 'streaming_media' and 'outputs' in result:
+            print("\nUpdating static website with streaming media endpoints...")
+            try:
+                # First, update the static website stack with the streaming media stack name
+                if args.static_website_stack:
+                    print(f"\nUpdating static website stack '{args.static_website_stack}' with streaming media stack name '{stack_name}'...")
+                    update_result = update_stack_parameters(
+                        args.static_website_stack,
+                        region,
+                        {'StreamingMediaStackName': stack_name},
+                        config
+                    )
+                    
+                    if update_result['status'] == 'error':
+                        print(f"Warning: Failed to update static website stack with streaming media stack name: {update_result['message']}")
+                    else:
+                        print(f"Successfully updated static website stack with streaming media stack name.")
+                
+                # Import the update_website module
+                import update_website
+                
+                # Get the streaming endpoints from the result
+                streaming_endpoints = {}
+                if 'HlsEndpointUrl' in result['outputs']:
+                    streaming_endpoints['hls'] = result['outputs']['HlsEndpointUrl']
+                if 'DashEndpointUrl' in result['outputs']:
+                    streaming_endpoints['dash'] = result['outputs']['DashEndpointUrl']
+                if 'MediaLiveInputUrl' in result['outputs']:
+                    streaming_endpoints['input'] = result['outputs']['MediaLiveInputUrl']
+                if 'VodBucketName' in result['outputs']:
+                    streaming_endpoints['vod'] = result['outputs']['VodBucketName']
+                
+                # Add the streaming media solution to the Solution Demonstrations section
+                if not update_website.add_streaming_media_to_solution_demos(config):
+                    print("Warning: Failed to add streaming media solution to Solution Demonstrations section.")
+                
+                # Add the streaming media buttons to the website
+                if not update_website.add_streaming_media_buttons(streaming_endpoints, config):
+                    print("Warning: Failed to add streaming media buttons to the website.")
+                
+                # Upload the updated website content if S3 bucket is available
+                s3_bucket = config.get('s3', {}).get('bucket')
+                if s3_bucket:
+                    print(f"\nUploading updated static website content to S3 bucket: {s3_bucket}")
+                    success = upload_static_website(s3_bucket, region, config)
+                    if not success:
+                        print("Warning: Failed to upload updated static website content.")
+            except Exception as e:
+                print(f"Warning: Failed to update static website with streaming media: {e}")
             
         # Provide instructions for exporting the template
         if not args.export_template:
