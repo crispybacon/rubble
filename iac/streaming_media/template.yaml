@@ -91,10 +91,6 @@ Resources:
                 OutputName: "MediaPackage_Output"
                 OutputSettings:
                   MediaPackageOutputSettings: {}
-      Tags:
-        Organization: !Ref OrganizationTag
-        BusinessUnit: !Ref BusinessUnitTag
-        Environment: !Ref EnvironmentTag
                 
   # MediaLive Input for receiving live streams
   MediaLiveInput:
@@ -105,10 +101,6 @@ Resources:
         - !Ref MediaLiveInputSecurityGroup
       Destinations:
         - StreamName: !Sub "${AWS::StackName}/live"
-      Tags:
-        Organization: !Ref OrganizationTag
-        BusinessUnit: !Ref BusinessUnitTag
-        Environment: !Ref EnvironmentTag
         
   # Security group for MediaLive Input
   MediaLiveInputSecurityGroup:
@@ -116,10 +108,6 @@ Resources:
     Properties:
       WhitelistRules:
         - Cidr: !Ref LiveInputWhitelistCidr
-      Tags:
-        Organization: !Ref OrganizationTag
-        BusinessUnit: !Ref BusinessUnitTag
-        Environment: !Ref EnvironmentTag
           
   # MediaPackage Channel for packaging live content
   MediaPackageChannel:
@@ -127,13 +115,6 @@ Resources:
     Properties:
       Id: !Sub "${AWS::StackName}-channel"
       Description: Channel for live streaming
-      Tags:
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
       
   # MediaPackage Origin Endpoint for HLS
   MediaPackageHlsEndpoint:
@@ -144,13 +125,6 @@ Resources:
       HlsPackage:
         SegmentDurationSeconds: 6
         PlaylistWindowSeconds: 60
-      Tags:
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
 
   # MediaPackage Origin Endpoint for DASH
   MediaPackageDashEndpoint:
@@ -161,13 +135,6 @@ Resources:
       DashPackage:
         SegmentDurationSeconds: 6
         ManifestWindowSeconds: 60
-      Tags:
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
 
   # S3 Bucket for VOD content
   VodContentBucket:
@@ -181,13 +148,6 @@ Resources:
             AllowedMethods: [GET, PUT, POST, DELETE, HEAD]
             AllowedOrigins: ['*']
             MaxAge: 3600
-      Tags:
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
             
   # CloudFront Origin Access Identity for VOD bucket
   VodOriginAccessIdentity:
@@ -239,13 +199,6 @@ Resources:
           ForwardedValues:
             QueryString: true
         Enabled: true
-      Tags:
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
 
 Outputs:
   MediaLiveInputUrl:
