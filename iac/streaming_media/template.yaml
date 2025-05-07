@@ -127,6 +127,13 @@ Resources:
     Properties:
       Id: !Sub "${AWS::StackName}-channel"
       Description: Channel for live streaming
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
       
   # MediaPackage Origin Endpoint for HLS
   MediaPackageHlsEndpoint:
@@ -137,6 +144,13 @@ Resources:
       HlsPackage:
         SegmentDurationSeconds: 6
         PlaylistWindowSeconds: 60
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
 
   # MediaPackage Origin Endpoint for DASH
   MediaPackageDashEndpoint:
@@ -147,6 +161,13 @@ Resources:
       DashPackage:
         SegmentDurationSeconds: 6
         ManifestWindowSeconds: 60
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
 
   # S3 Bucket for VOD content
   VodContentBucket:
