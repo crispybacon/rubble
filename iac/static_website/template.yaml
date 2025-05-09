@@ -26,8 +26,60 @@ Parameters:
     Type: String
     Description: Environment tag for resources
     Default: "dev"
+    
+  LogRetentionInDays:
+    Type: Number
+    Description: Number of days to retain CloudWatch logs
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    
+  EnableCloudFrontLogging:
+    Type: String
+    Description: Enable CloudFront logging to CloudWatch Logs
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+Conditions:
+  EnableCloudFrontLoggingCondition: !Equals [!Ref EnableCloudFrontLogging, "true"]
 
 Resources:
+  # CloudWatch Log Group for CloudFront logs
+  CloudFrontLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      LogGroupName: !Sub "/aws/cloudfront/${AWS::StackName}"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  # IAM Role for CloudFront to write to CloudWatch Logs
+  CloudFrontLoggingRole:
+    Type: AWS::IAM::Role
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
   # S3 Bucket for static website content
   StaticWebsiteBucket:
     Type: AWS::S3::Bucket
@@ -79,6 +131,191 @@ Resources:
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
+        
+  # CloudFront Real-Time Log Configuration
+  CloudFrontRealTimeLogConfig:
+    Type: AWS::CloudFront::RealtimeLogConfig
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      Name: !Sub "${AWS::StackName}-RealTimeLogConfig"
+      EndPoints:
+        - StreamType: Kinesis
+          KinesisStreamConfig:
+            RoleARN: !GetAtt CloudFrontLoggingRole.Arn
+            StreamARN: !GetAtt CloudFrontLogStream.Arn
+      Fields:
+        - timestamp
+        - client-ip
+        - cs-method
+        - cs-uri-stem
+        - sc-status
+        - cs-referer
+        - cs-user-agent
+        - cs-uri-query
+        - cs-cookie
+        - x-edge-location
+        - x-edge-request-id
+        - x-host-header
+        - time-taken
+        - ssl-protocol
+        - ssl-cipher
+      SamplingRate: 100
+      
+  # Kinesis Stream for CloudFront Real-Time Logs
+  CloudFrontLogStream:
+    Type: AWS::Kinesis::Stream
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      Name: !Sub "${AWS::StackName}-CloudFrontLogStream"
+      RetentionPeriodHours: 24
+      ShardCount: 1
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  # Lambda Function to Process CloudFront Logs and Send to CloudWatch
+  CloudFrontLogProcessorFunction:
+    Type: AWS::Lambda::Function
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-CloudFrontLogProcessor"
+      Handler: index.handler
+      Role: !GetAtt CloudFrontLogProcessorRole.Arn
+      Runtime: nodejs14.x
+      Timeout: 60
+      Environment:
+        Variables:
+          LOG_GROUP_NAME: !Ref CloudFrontLogGroup
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const cloudwatchLogs = new AWS.CloudWatchLogs();
+          
+          exports.handler = async (event) => {
+              const logGroupName = process.env.LOG_GROUP_NAME;
+              const logStreamName = new Date().toISOString().split('T')[0]; // Use date as stream name
+              
+              try {
+                  // Create log stream if it doesn't exist
+                  try {
+                      await cloudwatchLogs.createLogStream({
+                          logGroupName: logGroupName,
+                          logStreamName: logStreamName
+                      }).promise();
+                  } catch (error) {
+                      if (error.code !== 'ResourceAlreadyExistsException') {
+                          throw error;
+                      }
+                  }
+                  
+                  // Process Kinesis records
+                  const logEvents = [];
+                  for (const record of event.Records) {
+                      const payload = Buffer.from(record.kinesis.data, 'base64').toString('utf-8');
+                      logEvents.push({
+                          timestamp: Date.now(),
+                          message: payload
+                      });
+                  }
+                  
+                  if (logEvents.length > 0) {
+                      // Get sequence token for the log stream
+                      let sequenceToken;
+                      try {
+                          const streams = await cloudwatchLogs.describeLogStreams({
+                              logGroupName: logGroupName,
+                              logStreamNamePrefix: logStreamName
+                          }).promise();
+                          
+                          if (streams.logStreams.length > 0) {
+                              sequenceToken = streams.logStreams[0].uploadSequenceToken;
+                          }
+                      } catch (error) {
+                          console.error('Error getting sequence token:', error);
+                      }
+                      
+                      // Put log events
+                      const params = {
+                          logGroupName: logGroupName,
+                          logStreamName: logStreamName,
+                          logEvents: logEvents
+                      };
+                      
+                      if (sequenceToken) {
+                          params.sequenceToken = sequenceToken;
+                      }
+                      
+                      await cloudwatchLogs.putLogEvents(params).promise();
+                  }
+                  
+                  return { status: 'success', processedRecords: event.Records.length };
+              } catch (error) {
+                  console.error('Error processing CloudFront logs:', error);
+                  throw error;
+              }
+          };
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  # IAM Role for Lambda to process CloudFront logs
+  CloudFrontLogProcessorRole:
+    Type: AWS::IAM::Role
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudFrontLogProcessorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CloudFrontLogGroup}:*"
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListShards
+                Resource: !GetAtt CloudFrontLogStream.Arn
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  # Event Source Mapping to trigger Lambda from Kinesis
+  CloudFrontLogEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      BatchSize: 100
+      Enabled: true
+      EventSourceArn: !GetAtt CloudFrontLogStream.Arn
+      FunctionName: !GetAtt CloudFrontLogProcessorFunction.Arn
+      StartingPosition: LATEST
 
   # CloudFront Distribution
   CloudFrontDistribution:
@@ -106,9 +343,49 @@ Resources:
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Using managed cache policy: CachingOptimized
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
+          RealtimeLogConfigArn: !If 
+            - EnableCloudFrontLoggingCondition
+            - !GetAtt CloudFrontRealTimeLogConfig.Arn
+            - !Ref AWS::NoValue
         PriceClass: PriceClass_100
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
+        # Standard logging to S3 (in addition to real-time logging)
+        Logging: !If
+          - EnableCloudFrontLoggingCondition
+          - Bucket: !GetAtt CloudFrontLogBucket.DomainName
+            IncludeCookies: false
+            Prefix: "cloudfront-logs/"
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  # S3 Bucket for CloudFront access logs
+  CloudFrontLogBucket:
+    Type: AWS::S3::Bucket
+    Condition: EnableCloudFrontLoggingCondition
+    Properties:
+      AccessControl: LogDeliveryWrite
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: !Ref LogRetentionInDays
       Tags:
         - Key: Organization
           Value: !Ref OrganizationTag
@@ -133,3 +410,15 @@ Outputs:
     Value: !Ref StaticWebsiteBucket
     Export:
       Name: !Sub "${AWS::StackName}-S3BucketName"
+  CloudFrontLogGroupName:
+    Description: "Name of the CloudWatch Log Group for CloudFront logs"
+    Condition: EnableCloudFrontLoggingCondition
+    Value: !Ref CloudFrontLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontLogGroupName"
+  CloudFrontLogBucketName:
+    Description: "Name of the S3 bucket for CloudFront access logs"
+    Condition: EnableCloudFrontLoggingCondition
+    Value: !Ref CloudFrontLogBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontLogBucketName"

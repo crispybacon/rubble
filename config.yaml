@@ -26,6 +26,8 @@ solutions:
     deployed_dir: "iac/deployed"
     # Content directory for static website files
     content_dir: "iac/static_website/content"
+    # VOD content directory
+    vod_content_dir: "vod-samples"
     # Default parameters for CloudFormation deployment
     parameters:
       BucketNamePrefix: "flatstone-solutions"

@@ -285,6 +285,93 @@ class TestUpdateWebsite(unittest.TestCase):
         count = updated_content.count("AWS End User Messaging")
         self.assertEqual(count, 1, "Messaging solution should only appear once")
         
+    def test_add_streaming_media_to_solution_demos(self):
+        """Test adding streaming media solution to Solution Demonstrations section."""
+        # Override the content_dir in the test config
+        self.test_config['solutions']['static_website']['content_dir'] = str(self.content_path)
+        
+        # Test the function
+        result = update_website.add_streaming_media_to_solution_demos(self.test_config)
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Read the updated file
+        with open(self.index_path, 'r') as f:
+            updated_content = f.read()
+        
+        # Check that the streaming media solution was added
+        self.assertIn("AWS Media Services", updated_content)
+        self.assertIn("Live Streaming and Video on Demand", updated_content)
+        
+        # Test adding it again (should not duplicate)
+        result = update_website.add_streaming_media_to_solution_demos(self.test_config)
+        self.assertTrue(result)
+        
+        # Read the updated file
+        with open(self.index_path, 'r') as f:
+            updated_content = f.read()
+        
+        # Count occurrences of the streaming media solution
+        count = updated_content.count("AWS Media Services")
+        self.assertEqual(count, 1, "Streaming media solution should only appear once")
+        
+    def test_add_streaming_media_buttons(self):
+        """Test adding streaming media buttons to the index.html file."""
+        # Override the content_dir in the test config
+        self.test_config['solutions']['static_website']['content_dir'] = str(self.content_path)
+        
+        # Add communication buttons section to the test HTML
+        with open(self.index_path, 'r') as f:
+            content = f.read()
+        
+        # Add communication buttons section if it doesn't exist
+        if '<div class="communication-buttons">' not in content:
+            content = content.replace('<body>', '<body>\n<div class="communication-buttons">\n<button class="btn btn-primary">Test Button</button>\n</div>')
+            with open(self.index_path, 'w') as f:
+                f.write(content)
+        
+        # Create test streaming endpoints
+        streaming_endpoints = {
+            'hls': 'https://example.com/hls/index.m3u8',
+            'dash': 'https://example.com/dash/index.mpd',
+            'vod': 'test-vod-bucket'
+        }
+        
+        # Test the function
+        result = update_website.add_streaming_media_buttons(streaming_endpoints, self.test_config)
+        
+        # Check that the function returned True (success)
+        self.assertTrue(result)
+        
+        # Read the updated file
+        with open(self.index_path, 'r') as f:
+            updated_content = f.read()
+        
+        # Check that the streaming media buttons were added
+        self.assertIn('id="streaming-buttons"', updated_content)
+        self.assertIn('Live Stream', updated_content)
+        self.assertIn('Video on Demand', updated_content)
+        self.assertIn('https://example.com/hls/index.m3u8', updated_content)
+        
+        # Test updating existing buttons
+        new_endpoints = {
+            'hls': 'https://updated.example.com/hls/index.m3u8',
+            'dash': 'https://updated.example.com/dash/index.mpd',
+            'vod': 'updated-vod-bucket'
+        }
+        
+        result = update_website.add_streaming_media_buttons(new_endpoints, self.test_config)
+        self.assertTrue(result)
+        
+        # Read the updated file
+        with open(self.index_path, 'r') as f:
+            updated_content = f.read()
+        
+        # Check that the endpoints were updated
+        self.assertIn('https://updated.example.com/hls/index.m3u8', updated_content)
+        self.assertNotIn('https://example.com/hls/index.m3u8', updated_content)
+        
     @patch('update_website.parse_arguments')
     @patch('update_website.load_config')
     @patch('update_website.get_api_endpoint')

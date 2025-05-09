@@ -101,6 +101,9 @@
             </h2>
             <div class="smallText">
               <p class="bolded white">
+                AWS Certified Cloud Practitioner
+              </p>
+              <p class="bolded white">
                 Elastic Certified Engineer
               </p>
               <p class="bolded white">
@@ -121,6 +124,165 @@
             <i class="fa fa-phone contact-icon" aria-hidden="true" title="Send me a text message!"></i>
           </div>
         </div>
+        <div class="media-icons">
+          <div class="icon-container media-container">
+            <i class="fa fa-play-circle media-icon" aria-hidden="true" title="Watch Live Stream" onclick="window.location.href='/live/index.m3u8'"></i>
+            <i class="fa fa-film media-icon" aria-hidden="true" title="Video on Demand" onclick="openVideoOnDemand()"></i>
+          </div>
+        </div>
+        <div class="communication-buttons">
+          <button class="btn btn-primary" onclick="window.location.href='mailto:jesse.bacon@flatstoneservices.com'">
+            <i class="fa fa-envelope"></i> Email Me
+          </button>
+          <button class="btn btn-primary" id="sms-button">
+            <i class="fa fa-phone"></i> Text Me
+          </button>
+        </div><div class="streaming-buttons" id="streaming-buttons">
+  <button class="btn btn-primary" onclick="playLiveStream()">
+    <i class="fas fa-broadcast-tower"></i> Live Stream
+  </button>
+  <button class="btn btn-primary" onclick="playVOD()">
+    <i class="fas fa-film"></i> Video on Demand
+  </button>
+</div>
+
+<div id="video-modal" class="modal">
+  <div class="modal-content">
+    <span class="close-button" onclick="closeVideoModal()">&times;</span>
+    <h2 id="video-title">Video Player</h2>
+    <video id="video-player" controls></video>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  // Store streaming endpoints
+  const streamingEndpoints = {
+    hls: "https://22e4ccc18e50185b.mediapackage.us-east-1.amazonaws.com/out/v1/acda14fe0b6f4598891f6437c81cdc46/index.m3u8",
+    dash: "https://22e4ccc18e50185b.mediapackage.us-east-1.amazonaws.com/out/v1/f5eca0a3135d456a8bcc738ad73228c3/index.mpd",
+    vod: "flatstone-solutions-vod-us-east-1"
+  };
+  
+  // Get modal elements
+  const videoModal = document.getElementById('video-modal');
+  const videoPlayer = document.getElementById('video-player');
+  const videoTitle = document.getElementById('video-title');
+  
+  // Function to play live stream
+  function playLiveStream() {
+    videoTitle.textContent = 'Live Stream';
+    
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(streamingEndpoints.hls);
+      hls.attachMedia(videoPlayer);
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        videoPlayer.play();
+      });
+    } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+      // For Safari
+      videoPlayer.src = streamingEndpoints.hls;
+      videoPlayer.play();
+    }
+    
+    videoModal.style.display = 'block';
+  }
+  
+  // Function to play VOD
+  function playVOD() {
+    videoTitle.textContent = 'Video on Demand';
+    
+    // For demo purposes, we'll use a sample video
+    const vodUrl = 'https://d2zihajmogu5jn.cloudfront.net/big-buck-bunny/master.m3u8';
+    
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(vodUrl);
+      hls.attachMedia(videoPlayer);
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        videoPlayer.play();
+      });
+    } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+      // For Safari
+      videoPlayer.src = vodUrl;
+      videoPlayer.play();
+    }
+    
+    videoModal.style.display = 'block';
+  }
+  
+  // Function to close the video modal
+  function closeVideoModal() {
+    videoModal.style.display = 'none';
+    videoPlayer.pause();
+    videoPlayer.src = '';
+  }
+  
+  // Close modal when clicking outside of it
+  window.onclick = function(event) {
+    if (event.target == videoModal) {
+      closeVideoModal();
+    }
+  };
+</script>
+
+<style>
+  .streaming-buttons {
+    display: flex;
+    gap: 10px;
+    margin-left: 20px;
+  }
+  
+  .streaming-buttons .btn-primary {
+    background-color: #0066cc;
+    border-color: #0059b3;
+  }
+  
+  .streaming-buttons .btn-primary:hover {
+    background-color: #0059b3;
+    border-color: #004c99;
+  }
+  
+  .modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.7);
+  }
+  
+  .modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 800px;
+    border-radius: 5px;
+  }
+  
+  .close-button {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  
+  .close-button:hover {
+    color: black;
+  }
+  
+  #video-player {
+    width: 100%;
+    max-height: 450px;
+    margin-top: 15px;
+  }
+</style>
         <div>
           <h1>
             Jesse Bacon
@@ -435,6 +597,54 @@
   <script>
     // Email address from config.yaml
     const emailAddress = 'jesse.bacon@flatstoneservices.com';
+    
+    // Function to open video on demand modal with available videos
+    function openVideoOnDemand() {
+      const vodModal = document.createElement('div');
+      vodModal.className = 'custom-alert';
+      vodModal.innerHTML = `
+        <div class="alert-content">
+          <div class="alert-header">
+            <i class="fa fa-film" aria-hidden="true"></i>
+            <span>Video on Demand</span>
+            <span class="close-btn">&times;</span>
+          </div>
+          <div class="alert-body">
+            <h3>Available Videos</h3>
+            <div class="video-list">
+              <div class="video-item" onclick="window.location.href='/vod/sample1.mp4'">
+                <i class="fa fa-file-video-o"></i>
+                <span>AWS CloudFormation Demo</span>
+              </div>
+              <div class="video-item" onclick="window.location.href='/vod/sample2.mp4'">
+                <i class="fa fa-file-video-o"></i>
+                <span>Media Services Overview</span>
+              </div>
+              <div class="video-item" onclick="window.location.href='/vod/sample3.mp4'">
+                <i class="fa fa-file-video-o"></i>
+                <span>AWS Lambda Functions</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      // Add the modal to the document
+      document.body.appendChild(vodModal);
+      
+      // Add click event to close button
+      const closeBtn = vodModal.querySelector('.close-btn');
+      closeBtn.addEventListener('click', function() {
+        document.body.removeChild(vodModal);
+      });
+      
+      // Auto-close the modal after 30 seconds
+      setTimeout(() => {
+        if (document.body.contains(vodModal)) {
+          document.body.removeChild(vodModal);
+        }
+      }, 30000);
+    }
     
     document.addEventListener('DOMContentLoaded', function() {
       // Get all contact icons

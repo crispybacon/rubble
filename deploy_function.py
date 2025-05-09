@@ -2,6 +2,7 @@ import boto3
 import yaml
 import json
 import os
+import mimetypes
 from datetime import datetime
 from pathlib import Path
 
@@ -152,6 +153,76 @@ def upload_static_website(s3_bucket, region, config=None):
         return True
     except Exception as e:
         print(f"Error uploading static website content: {e}")
+        return False
+
+def upload_vod_content(s3_bucket, region, config=None):
+    """
+    Upload video on demand content to an S3 bucket.
+    
+    Args:
+        s3_bucket: Name of the S3 bucket
+        region: AWS region
+        config: Configuration dictionary
+        
+    Returns:
+        bool: True if upload was successful, False otherwise
+    """
+    try:
+        # Initialize S3 client
+        s3 = boto3.client('s3', region_name=region)
+        
+        # Get the VOD content directory from config if available
+        vod_samples_dir = Path('vod-samples')
+        
+        if config and 'solutions' in config and 'combined_website' in config['solutions']:
+            solution_config = config['solutions']['combined_website']
+            if 'vod_content_dir' in solution_config:
+                vod_dir_path = solution_config['vod_content_dir']
+                vod_samples_dir = Path(vod_dir_path)
+                print(f"Using VOD content directory from config: {vod_samples_dir}")
+        
+        # Check if the directory exists
+        if not vod_samples_dir.exists() or not vod_samples_dir.is_dir():
+            print(f"Error: VOD samples directory '{vod_samples_dir}' not found.")
+            return False
+        
+        # Check if the bucket exists
+        try:
+            s3.head_bucket(Bucket=s3_bucket)
+        except Exception as e:
+            print(f"Error: S3 bucket '{s3_bucket}' not accessible: {e}")
+            return False
+        
+        # Upload video files
+        file_count = 0
+        for file_path in vod_samples_dir.glob('**/*'):
+            if file_path.is_file():
+                # Calculate the relative path for the S3 key
+                relative_path = file_path.relative_to(vod_samples_dir)
+                # Add 'vod/' prefix to the key
+                s3_key = f"vod/{str(relative_path)}"
+                
+                # Determine content type based on file extension
+                content_type, _ = mimetypes.guess_type(str(file_path))
+                if content_type is None:
+                    # Default to binary/octet-stream if type cannot be determined
+                    content_type = 'application/octet-stream'
+                
+                # Upload the file
+                print(f"Uploading {file_path} to s3://{s3_bucket}/{s3_key}")
+                with open(file_path, 'rb') as file_data:
+                    s3.put_object(
+                        Bucket=s3_bucket,
+                        Key=s3_key,
+                        Body=file_data,
+                        ContentType=content_type
+                    )
+                file_count += 1
+        
+        print(f"Successfully uploaded {file_count} VOD files to s3://{s3_bucket}/vod/")
+        return True
+    except Exception as e:
+        print(f"Error uploading VOD content: {e}")
         return False
 
 def attach_bucket_policy(bucket_name, region, cloudfront_distribution_arn=None):
@@ -797,7 +868,7 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
             export_deployed_template(solution_name, stack_name, region, config)
         
         # Check if we need to attach a bucket policy for the static website solution
-        if solution_name == 'static_website' and 'S3BucketName' in outputs:
+        if (solution_name == 'static_website' or solution_name == 'combined_website') and 'S3BucketName' in outputs:
             # Check if the template already has a bucket policy
             template_has_bucket_policy = 'S3BucketPolicy' in load_cloudformation_yaml(template_body).get('Resources', {})
             
@@ -824,6 +895,26 @@ def deploy_cloudformation_template(solution_name, stack_name, region, config, ex
                 print("Successfully uploaded static website files to S3 bucket.")
             else:
                 print("Warning: Failed to upload static website files to S3 bucket.")
+                
+        # Handle combined_website solution - upload VOD content to the VOD bucket
+        if solution_name == 'combined_website' and 'VodBucketName' in outputs:
+            # Upload VOD content to the VOD bucket
+            print(f"Uploading VOD content to S3 bucket: {outputs['VodBucketName']}")
+            upload_success = upload_vod_content(outputs['VodBucketName'], region, config)
+            if upload_success:
+                print("Successfully uploaded VOD content to S3 bucket.")
+            else:
+                print("Warning: Failed to upload VOD content to S3 bucket.")
+                
+        # Handle combined_website solution - upload VOD content to the VOD bucket
+        if solution_name == 'combined_website' and 'VodBucketName' in outputs:
+            # Upload VOD content to the VOD bucket
+            print(f"Uploading VOD content to S3 bucket: {outputs['VodBucketName']}")
+            upload_success = upload_vod_content(outputs['VodBucketName'], region, config)
+            if upload_success:
+                print("Successfully uploaded VOD content to S3 bucket.")
+            else:
+                print("Warning: Failed to upload VOD content to S3 bucket.")
         
         return {
             'status': 'success',

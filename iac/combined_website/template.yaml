@@ -29,6 +29,25 @@ Parameters:
     Default: 0.0.0.0/0
     Description: CIDR block to whitelist for live streaming input
     
+  # Logging Parameters
+  LogRetentionInDays:
+    Type: Number
+    Description: Number of days to retain CloudWatch logs
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    
+  EnableMediaLiveLogging:
+    Type: String
+    Description: Enable MediaLive logging to CloudWatch Logs
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    
+  EnableMediaPackageLogging:
+    Type: String
+    Description: Enable MediaPackage logging to CloudWatch Logs
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    
   # Common Parameters
   OrganizationTag:
     Type: String
@@ -45,7 +64,40 @@ Parameters:
     Description: Environment tag for resources
     Default: "dev"
 
+Conditions:
+  EnableMediaLiveLoggingCondition: !Equals [!Ref EnableMediaLiveLogging, "true"]
+  EnableMediaPackageLoggingCondition: !Equals [!Ref EnableMediaPackageLogging, "true"]
+
 Resources:
+  # CloudWatch Log Groups
+  MediaLiveLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableMediaLiveLoggingCondition
+    Properties:
+      LogGroupName: !Sub "/aws/medialive/${AWS::StackName}"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
+  MediaPackageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableMediaPackageLoggingCondition
+    Properties:
+      LogGroupName: !Sub "/aws/mediapackage/${AWS::StackName}"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+          
   # S3 Bucket for static website content
   StaticWebsiteBucket:
     Type: AWS::S3::Bucket
@@ -111,6 +163,36 @@ Resources:
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
+        
+  # Removed real-time CloudWatch logs
+      
+  # S3 Bucket for CloudFront access logs
+  CloudFrontLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: LogDeliveryWrite
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
 
   # S3 Bucket Policy for static website content
   StaticWebsiteBucketPolicy:
@@ -161,6 +243,7 @@ Resources:
         - Id: "MediaPackageDestination"
           MediaPackageSettings:
             - ChannelId: !Ref MediaPackageChannel
+      LogLevel: !If [EnableMediaLiveLoggingCondition, "INFO", "DISABLED"]
       EncoderSettings:
         AudioDescriptions:
           - AudioSelectorName: "Default"
@@ -358,6 +441,11 @@ Resources:
         PriceClass: PriceClass_100
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
+        # Standard logging to S3
+        Logging:
+          Bucket: !GetAtt CloudFrontLogBucket.DomainName
+          IncludeCookies: false
+          Prefix: "cloudfront-logs/"
       
       Tags:
         - Key: Organization
@@ -409,3 +497,23 @@ Outputs:
     Value: !GetAtt MediaPackageDashEndpoint.Url
     Export:
       Name: !Sub "${AWS::StackName}-DashEndpointUrl"
+      
+  MediaLiveLogGroupName:
+    Description: "Name of the CloudWatch Log Group for MediaLive logs"
+    Condition: EnableMediaLiveLoggingCondition
+    Value: !Ref MediaLiveLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-MediaLiveLogGroupName"
+      
+  MediaPackageLogGroupName:
+    Description: "Name of the CloudWatch Log Group for MediaPackage logs"
+    Condition: EnableMediaPackageLoggingCondition
+    Value: !Ref MediaPackageLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-MediaPackageLogGroupName"
+      
+  CloudFrontLogBucketName:
+    Description: "Name of the S3 bucket for CloudFront access logs"
+    Value: !Ref CloudFrontLogBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontLogBucketName"
