@@ -348,6 +348,30 @@ def update_website_streaming_urls(stack_name, region, html_file_path=None):
         except Exception as e:
             print(f"Warning: Failed to create CloudFront invalidation: {e}")
         
+        # List VOD bucket contents to verify videos are available
+        try:
+            vod_bucket = outputs['VodBucketName']
+            print(f"Checking VOD bucket contents: {vod_bucket}")
+            response = s3.list_objects_v2(Bucket=vod_bucket, Prefix='vod/')
+            
+            if 'Contents' in response:
+                video_count = sum(1 for item in response['Contents'] if item['Key'].lower().endswith(('.mp4', '.m3u8', '.mov', '.avi', '.wmv', '.flv', '.mkv')))
+                print(f"Found {video_count} video files in the VOD bucket")
+                
+                # Print the first few videos for verification
+                print("Sample videos:")
+                video_files = [item['Key'] for item in response['Contents'] 
+                              if item['Key'].lower().endswith(('.mp4', '.m3u8', '.mov', '.avi', '.wmv', '.flv', '.mkv'))]
+                for i, video in enumerate(video_files[:5]):
+                    print(f"  {i+1}. {video}")
+                
+                if len(video_files) > 5:
+                    print(f"  ... and {len(video_files) - 5} more")
+            else:
+                print("No contents found in the VOD bucket. You may need to upload videos.")
+        except Exception as e:
+            print(f"Warning: Failed to list VOD bucket contents: {e}")
+        
         return {
             'status': 'success',
             'message': "Successfully updated streaming URLs",

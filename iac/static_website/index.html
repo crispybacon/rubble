@@ -158,20 +158,91 @@
     
     const hlsUrl = streamingEndpoints.hls;
     
+    // Create a temporary Hls instance to check if the stream is available
     if (Hls.isSupported()) {
-      const hls = new Hls();
-      hls.loadSource(hlsUrl);
-      hls.attachMedia(videoPlayer);
-      hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        videoPlayer.play();
+      const checkHls = new Hls({debug: false});
+      checkHls.loadSource(hlsUrl);
+      
+      // Add error handler
+      checkHls.on(Hls.Events.ERROR, function(event, data) {
+        checkHls.destroy();
+        showStreamUnavailableMessage();
       });
+      
+      // Add manifest parsed handler
+      checkHls.on(Hls.Events.MANIFEST_PARSED, function() {
+        // Stream is available, play it
+        checkHls.destroy();
+        
+        const hls = new Hls();
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(videoPlayer);
+        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+          videoPlayer.play();
+        });
+        
+        videoModal.style.display = 'block';
+      });
+      
+      // Add timeout in case the stream doesn't respond
+      setTimeout(() => {
+        if (checkHls) {
+          checkHls.destroy();
+          showStreamUnavailableMessage();
+        }
+      }, 5000);
     } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-      // For Safari
+      // For Safari, we can't easily check if the stream is available
+      // So we'll just try to play it and handle errors
       videoPlayer.src = hlsUrl;
       videoPlayer.play();
+      videoModal.style.display = 'block';
+      
+      // Add error handler for Safari
+      videoPlayer.onerror = function() {
+        closeVideoModal();
+        showStreamUnavailableMessage();
+      };
     }
+  }
+  
+  // Function to show a message when the stream is unavailable
+  function showStreamUnavailableMessage() {
+    const streamUnavailableModal = document.createElement('div');
+    streamUnavailableModal.className = 'custom-alert';
+    streamUnavailableModal.innerHTML = `
+      <div class="alert-content">
+        <div class="alert-header">
+          <i class="fa fa-exclamation-circle" aria-hidden="true"></i>
+          <span>Live Stream Unavailable</span>
+          <span class="close-btn">&times;</span>
+        </div>
+        <div class="alert-body">
+          <p>The JesseBacon.US live stream is currently offline. Please try again later or check out our video on demand content.</p>
+          <div class="form-actions">
+            <button class="submit-btn" onclick="openVideoOnDemand(); document.body.removeChild(this.closest('.custom-alert'));">
+              <i class="fa fa-film"></i> Browse Video on Demand
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
     
-    videoModal.style.display = 'block';
+    // Add the modal to the document
+    document.body.appendChild(streamUnavailableModal);
+    
+    // Add click event to close button
+    const closeBtn = streamUnavailableModal.querySelector('.close-btn');
+    closeBtn.addEventListener('click', function() {
+      document.body.removeChild(streamUnavailableModal);
+    });
+    
+    // Auto-close the modal after 10 seconds
+    setTimeout(() => {
+      if (document.body.contains(streamUnavailableModal)) {
+        document.body.removeChild(streamUnavailableModal);
+      }
+    }, 10000);
   }
   
   // Function to play a specific VOD file
@@ -198,6 +269,7 @@
   function closeVideoModal() {
     videoModal.style.display = 'none';
     videoPlayer.pause();
+    videoPlayer.src = '';  // Clear the source to stop any network activity
     videoPlayer.src = '';
   }
   
@@ -645,42 +717,115 @@
     function loadVodVideos() {
       const vodList = document.getElementById('vod-list');
       
-      // Sample videos - these would be dynamically loaded in production
-      const videos = [
-        { name: "AWS CloudFormation Demo", path: `${streamingEndpoints.vod}/Mongo Database Design Patterns_ Document Versions.mp4` },
-        { name: "Media Services Overview", path: `${streamingEndpoints.vod}/Year Of The Tiger_ Form Four.mp4` }
-      ];
+      // Show loading message
+      vodList.innerHTML = '<p>Loading available videos...</p>';
       
-      // Clear loading message
-      vodList.innerHTML = '';
-      
-      if (videos.length === 0) {
-        vodList.innerHTML = '<p>No videos available</p>';
-        return;
-      }
-      
-      // Create video items
-      videos.forEach(video => {
-        const videoItem = document.createElement('div');
-        videoItem.className = 'video-item';
-        videoItem.innerHTML = `
-          <i class="fa fa-file-video-o"></i>
-          <span>${video.name}</span>
-        `;
-        
-        // Add click event to play the video
-        videoItem.addEventListener('click', function() {
-          playVodFile(video.path, video.name);
-          
-          // Find and close the VOD modal
-          const vodModal = document.querySelector('.custom-alert');
-          if (vodModal) {
-            document.body.removeChild(vodModal);
+      // Fetch the list of videos from the VOD bucket
+      fetch('/vod/')
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Failed to fetch video list');
           }
+          return response.text();
+        })
+        .then(data => {
+          // Parse the XML response to extract video files
+          const parser = new DOMParser();
+          const xmlDoc = parser.parseFromString(data, 'text/xml');
+          const contents = xmlDoc.getElementsByTagName('Contents');
+          
+          // Extract video files (mp4, m3u8, etc.)
+          const videos = [];
+          for (let i = 0; i < contents.length; i++) {
+            const key = contents[i].getElementsByTagName('Key')[0].textContent;
+            // Only include video files and skip directories
+            if (key.match(/\.(mp4|m3u8|mov|avi|wmv|flv|mkv)$/i) && !key.endsWith('/')) {
+              // Format the name by removing the path prefix and file extension
+              let name = key.split('/').pop().replace(/\.[^/.]+$/, '');
+              // Replace underscores with spaces and improve formatting
+              name = name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+              
+              videos.push({
+                name: name,
+                path: `/${key}`
+              });
+            }
+          }
+          
+          // Display the videos or a message if none are found
+          if (videos.length === 0) {
+            vodList.innerHTML = '<p>No videos available</p>';
+            return;
+          }
+          
+          // Clear loading message
+          vodList.innerHTML = '';
+          
+          // Create video items
+          videos.forEach(video => {
+            const videoItem = document.createElement('div');
+            videoItem.className = 'video-item';
+            videoItem.innerHTML = `
+              <i class="fa fa-file-video-o"></i>
+              <span>${video.name}</span>
+            `;
+            
+            // Add click event to play the video
+            videoItem.addEventListener('click', function() {
+              playVodFile(video.path, video.name);
+              
+              // Find and close the VOD modal
+              const vodModal = document.querySelector('.custom-alert');
+              if (vodModal) {
+                document.body.removeChild(vodModal);
+              }
+            });
+            
+            vodList.appendChild(videoItem);
+          });
+        })
+        .catch(error => {
+          console.error('Error loading videos:', error);
+          
+          // Fallback to hardcoded videos if fetching fails
+          const fallbackVideos = [
+            { name: "MongoDB Database Design Patterns", path: `${streamingEndpoints.vod}/Mongo Database Design Patterns_ Document Versions.mp4` },
+            { name: "Year Of The Tiger: Form Four", path: `${streamingEndpoints.vod}/Year Of The Tiger_ Form Four.mp4` }
+          ];
+          
+          // Clear loading message
+          vodList.innerHTML = '';
+          
+          if (fallbackVideos.length === 0) {
+            vodList.innerHTML = '<p>No videos available</p>';
+            return;
+          }
+          
+          // Create video items from fallback list
+          fallbackVideos.forEach(video => {
+            const videoItem = document.createElement('div');
+            videoItem.className = 'video-item';
+            videoItem.innerHTML = `
+              <i class="fa fa-file-video-o"></i>
+              <span>${video.name}</span>
+            `;
+            
+            // Add click event to play the video
+            videoItem.addEventListener('click', function() {
+              playVodFile(video.path, video.name);
+              
+              // Find and close the VOD modal
+              const vodModal = document.querySelector('.custom-alert');
+              if (vodModal) {
+                document.body.removeChild(vodModal);
+              }
+            });
+            
+            vodList.appendChild(videoItem);
+          });
         });
-        
-        vodList.appendChild(videoItem);
-      });
+      
+
     }
     
     document.addEventListener('DOMContentLoaded', function() {
