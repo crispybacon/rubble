@@ -224,6 +224,138 @@ def upload_vod_content(s3_bucket, region, config=None):
     except Exception as e:
         print(f"Error uploading VOD content: {e}")
         return False
+        
+def update_streaming_endpoints(html_file_path, hls_endpoint, vod_bucket_name):
+    """
+    Update the streaming endpoints in the HTML file.
+    
+    Args:
+        html_file_path: Path to the HTML file
+        hls_endpoint: HLS endpoint URL
+        vod_bucket_name: VOD bucket name
+        
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
+    try:
+        # Read the HTML file
+        with open(html_file_path, 'r') as file:
+            html_content = file.read()
+        
+        # Create the replacement string
+        replacement = f'''  // These values are dynamically set during deployment
+  const streamingEndpoints = {{
+    hls: "{hls_endpoint}",
+    vod: "/vod"
+  }};'''
+        
+        # Replace the streaming endpoints
+        updated_content = html_content.replace(
+            '  // These values will be replaced during deployment with actual endpoints\n  const streamingEndpoints = {\n    hls: "/live/index.m3u8",\n    vod: "/vod"\n  };',
+            replacement
+        )
+        
+        # Write the updated content back to the file
+        with open(html_file_path, 'w') as file:
+            file.write(updated_content)
+        
+        print(f"Successfully updated streaming endpoints in {html_file_path}")
+        return True
+    except Exception as e:
+        print(f"Error updating streaming endpoints: {e}")
+        return False
+
+def update_website_streaming_urls(stack_name, region, html_file_path=None):
+    """
+    Update the streaming URLs in the website HTML file and upload it to S3.
+    
+    Args:
+        stack_name: Name of the CloudFormation stack
+        region: AWS region
+        html_file_path: Path to the HTML file (optional, defaults to iac/static_website/index.html)
+        
+    Returns:
+        dict: Update result with status and message
+    """
+    try:
+        # Initialize CloudFormation client
+        cfn = boto3.client('cloudformation', region_name=region)
+        
+        # Get stack outputs
+        try:
+            stack_info = cfn.describe_stacks(StackName=stack_name)
+            outputs = {output['OutputKey']: output['OutputValue'] 
+                      for output in stack_info['Stacks'][0].get('Outputs', [])}
+        except Exception as e:
+            return {'status': 'error', 'message': f"Error getting stack outputs: {str(e)}"}
+        
+        # Check if required outputs exist
+        required_outputs = ['HlsEndpointUrl', 'StaticWebsiteBucketName', 'VodBucketName']
+        missing_outputs = [output for output in required_outputs if output not in outputs]
+        if missing_outputs:
+            return {'status': 'error', 'message': f"Missing required stack outputs: {', '.join(missing_outputs)}"}
+        
+        # Set default HTML file path if not provided
+        if not html_file_path:
+            html_file_path = Path('iac/static_website/index.html')
+        else:
+            html_file_path = Path(html_file_path)
+        
+        # Check if HTML file exists
+        if not html_file_path.exists():
+            return {'status': 'error', 'message': f"HTML file not found: {html_file_path}"}
+        
+        # Update streaming endpoints in HTML file
+        print(f"Updating streaming endpoints in {html_file_path}")
+        update_success = update_streaming_endpoints(
+            html_file_path,
+            outputs['HlsEndpointUrl'],
+            outputs['VodBucketName']
+        )
+        
+        if not update_success:
+            return {'status': 'error', 'message': "Failed to update streaming endpoints in HTML file"}
+        
+        # Upload updated HTML file to S3
+        s3 = boto3.client('s3', region_name=region)
+        try:
+            with open(html_file_path, 'rb') as file_data:
+                s3.put_object(
+                    Bucket=outputs['StaticWebsiteBucketName'],
+                    Key='index.html',
+                    Body=file_data,
+                    ContentType='text/html'
+                )
+            print(f"Successfully uploaded updated HTML file to S3 bucket: {outputs['StaticWebsiteBucketName']}")
+        except Exception as e:
+            return {'status': 'error', 'message': f"Error uploading HTML file to S3: {str(e)}"}
+        
+        # Create CloudFront invalidation to clear cache
+        try:
+            if 'CloudFrontDistributionId' in outputs:
+                cf = boto3.client('cloudfront', region_name=region)
+                invalidation_response = cf.create_invalidation(
+                    DistributionId=outputs['CloudFrontDistributionId'],
+                    InvalidationBatch={
+                        'Paths': {
+                            'Quantity': 1,
+                            'Items': ['/index.html']
+                        },
+                        'CallerReference': str(int(time.time()))
+                    }
+                )
+                print(f"Created CloudFront invalidation: {invalidation_response['Invalidation']['Id']}")
+        except Exception as e:
+            print(f"Warning: Failed to create CloudFront invalidation: {e}")
+        
+        return {
+            'status': 'success',
+            'message': "Successfully updated streaming URLs",
+            'website_url': f"https://{outputs.get('CloudFrontDistributionDomainName', 'unknown')}"
+        }
+    
+    except Exception as e:
+        return {'status': 'error', 'message': f"Error updating streaming URLs: {str(e)}"}
 
 def attach_bucket_policy(bucket_name, region, cloudfront_distribution_arn=None):
     """

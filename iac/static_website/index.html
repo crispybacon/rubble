@@ -126,25 +126,10 @@
         </div>
         <div class="media-icons">
           <div class="icon-container media-container">
-            <i class="fa fa-play-circle media-icon" aria-hidden="true" title="Watch Live Stream" onclick="window.location.href='/live/index.m3u8'"></i>
+            <i class="fa fa-play-circle media-icon" aria-hidden="true" title="Watch Live Stream" onclick="playLiveStream()"></i>
             <i class="fa fa-film media-icon" aria-hidden="true" title="Video on Demand" onclick="openVideoOnDemand()"></i>
           </div>
         </div>
-        <div class="communication-buttons">
-          <button class="btn btn-primary" onclick="window.location.href='mailto:jesse.bacon@flatstoneservices.com'">
-            <i class="fa fa-envelope"></i> Email Me
-          </button>
-          <button class="btn btn-primary" id="sms-button">
-            <i class="fa fa-phone"></i> Text Me
-          </button>
-        </div><div class="streaming-buttons" id="streaming-buttons">
-  <button class="btn btn-primary" onclick="playLiveStream()">
-    <i class="fas fa-broadcast-tower"></i> Live Stream
-  </button>
-  <button class="btn btn-primary" onclick="playVOD()">
-    <i class="fas fa-film"></i> Video on Demand
-  </button>
-</div>
 
 <div id="video-modal" class="modal">
   <div class="modal-content">
@@ -156,11 +141,10 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
-  // Store streaming endpoints
+  // These values will be replaced during deployment with actual endpoints
   const streamingEndpoints = {
-    hls: "https://22e4ccc18e50185b.mediapackage.us-east-1.amazonaws.com/out/v1/acda14fe0b6f4598891f6437c81cdc46/index.m3u8",
-    dash: "https://22e4ccc18e50185b.mediapackage.us-east-1.amazonaws.com/out/v1/f5eca0a3135d456a8bcc738ad73228c3/index.mpd",
-    vod: "flatstone-solutions-vod-us-east-1"
+    hls: "/live/index.m3u8",
+    vod: "/vod"
   };
   
   // Get modal elements
@@ -172,39 +156,38 @@
   function playLiveStream() {
     videoTitle.textContent = 'Live Stream';
     
+    const hlsUrl = streamingEndpoints.hls;
+    
     if (Hls.isSupported()) {
       const hls = new Hls();
-      hls.loadSource(streamingEndpoints.hls);
+      hls.loadSource(hlsUrl);
       hls.attachMedia(videoPlayer);
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
         videoPlayer.play();
       });
     } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
       // For Safari
-      videoPlayer.src = streamingEndpoints.hls;
+      videoPlayer.src = hlsUrl;
       videoPlayer.play();
     }
     
     videoModal.style.display = 'block';
   }
   
-  // Function to play VOD
-  function playVOD() {
-    videoTitle.textContent = 'Video on Demand';
+  // Function to play a specific VOD file
+  function playVodFile(videoPath, videoName) {
+    videoTitle.textContent = videoName;
     
-    // For demo purposes, we'll use a sample video
-    const vodUrl = 'https://d2zihajmogu5jn.cloudfront.net/big-buck-bunny/master.m3u8';
-    
-    if (Hls.isSupported()) {
+    if (Hls.isSupported() && videoPath.endsWith('.m3u8')) {
       const hls = new Hls();
-      hls.loadSource(vodUrl);
+      hls.loadSource(videoPath);
       hls.attachMedia(videoPlayer);
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
         videoPlayer.play();
       });
-    } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-      // For Safari
-      videoPlayer.src = vodUrl;
+    } else {
+      // For direct MP4 files or Safari HLS
+      videoPlayer.src = videoPath;
       videoPlayer.play();
     }
     
@@ -518,31 +501,51 @@
                         Features responsive design with collapsible sections
                       </p>
                     </li>
-                  
-      <li>
-        <div class="jobPosition">
-          <span class="bolded">
-            AWS Media Services
-          </span>
-          <span>
-            MediaLive, MediaPackage, CloudFront
-          </span>
-        </div>
-        <div class="job-content">
-          <div class="projectName bolded">
-            <span>
-              Live Streaming and Video on Demand
-            </span>
-          </div>
-          <div class="smallText">
-            <p>
-              Live streaming and video on demand capabilities using AWS Media Services, with HLS and DASH delivery via CloudFront.
-            </p>
-          </div>
-        </div>
-      </li></ul>
+                  </ul>
                   <p>
                     <span class="bolded">Technologies: </span>AWS S3, CloudFront, HTML/CSS/JavaScript
+                  </p>
+                </div>
+              </div>
+            </li>
+            <li>
+              <div class="jobPosition">
+                <span class="bolded">
+                  AWS Media Services
+                </span>
+                <span>
+                  MediaLive, MediaPackage, CloudFront
+                </span>
+              </div>
+              <div class="job-content">
+                <div class="projectName bolded">
+                  <span>
+                    Live Streaming and Video on Demand
+                  </span>
+                </div>
+                <div class="smallText">
+                  <p>
+                    Live streaming and video on demand capabilities using AWS Media Services, with HLS and DASH delivery via CloudFront.
+                  </p>
+                  <ul>
+                    <li>
+                      <p>
+                        Supports both live streaming and pre-recorded video content
+                      </p>
+                    </li>
+                    <li>
+                      <p>
+                        Uses AWS MediaLive for real-time video transcoding
+                      </p>
+                    </li>
+                    <li>
+                      <p>
+                        Delivers content via HLS and DASH protocols for broad device compatibility
+                      </p>
+                    </li>
+                  </ul>
+                  <p>
+                    <span class="bolded">Technologies: </span>AWS MediaLive, MediaPackage, CloudFront, S3, HLS, DASH
                   </p>
                 </div>
               </div>
@@ -611,19 +614,8 @@
           </div>
           <div class="alert-body">
             <h3>Available Videos</h3>
-            <div class="video-list">
-              <div class="video-item" onclick="window.location.href='/vod/sample1.mp4'">
-                <i class="fa fa-file-video-o"></i>
-                <span>AWS CloudFormation Demo</span>
-              </div>
-              <div class="video-item" onclick="window.location.href='/vod/sample2.mp4'">
-                <i class="fa fa-file-video-o"></i>
-                <span>Media Services Overview</span>
-              </div>
-              <div class="video-item" onclick="window.location.href='/vod/sample3.mp4'">
-                <i class="fa fa-file-video-o"></i>
-                <span>AWS Lambda Functions</span>
-              </div>
+            <div id="vod-list" class="video-list">
+              <p>Loading available videos...</p>
             </div>
           </div>
         </div>
@@ -638,12 +630,57 @@
         document.body.removeChild(vodModal);
       });
       
-      // Auto-close the modal after 30 seconds
+      // Load videos from VOD bucket
+      loadVodVideos();
+      
+      // Auto-close the modal after 60 seconds
       setTimeout(() => {
         if (document.body.contains(vodModal)) {
           document.body.removeChild(vodModal);
         }
-      }, 30000);
+      }, 60000);
+    }
+    
+    // Function to load videos from VOD bucket
+    function loadVodVideos() {
+      const vodList = document.getElementById('vod-list');
+      
+      // Sample videos - these would be dynamically loaded in production
+      const videos = [
+        { name: "AWS CloudFormation Demo", path: `${streamingEndpoints.vod}/Mongo Database Design Patterns_ Document Versions.mp4` },
+        { name: "Media Services Overview", path: `${streamingEndpoints.vod}/Year Of The Tiger_ Form Four.mp4` }
+      ];
+      
+      // Clear loading message
+      vodList.innerHTML = '';
+      
+      if (videos.length === 0) {
+        vodList.innerHTML = '<p>No videos available</p>';
+        return;
+      }
+      
+      // Create video items
+      videos.forEach(video => {
+        const videoItem = document.createElement('div');
+        videoItem.className = 'video-item';
+        videoItem.innerHTML = `
+          <i class="fa fa-file-video-o"></i>
+          <span>${video.name}</span>
+        `;
+        
+        // Add click event to play the video
+        videoItem.addEventListener('click', function() {
+          playVodFile(video.path, video.name);
+          
+          // Find and close the VOD modal
+          const vodModal = document.querySelector('.custom-alert');
+          if (vodModal) {
+            document.body.removeChild(vodModal);
+          }
+        });
+        
+        vodList.appendChild(videoItem);
+      });
     }
     
     document.addEventListener('DOMContentLoaded', function() {
