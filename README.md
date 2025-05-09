@@ -18,6 +18,17 @@ To deploy the combined solution:
 python aws_resource_manager.py --deploy combined_website --stack_name your-combined-stack-name
 ```
 
+After deployment, you can update the streaming URLs in the website HTML file:
+```bash
+python aws_resource_manager.py --update_streaming_urls --stack_name your-combined-stack-name
+```
+
+This will:
+1. Retrieve the HLS endpoint URL from the stack outputs
+2. Update the HTML file with the correct streaming endpoints
+3. Upload the updated HTML file to the S3 bucket
+4. Create a CloudFront invalidation to ensure the updated file is served
+
 ### CloudFront Distribution Deployment Timeout Fix
 
 Fixed an issue where the CloudFront distribution would fail to deploy with the error:
@@ -147,6 +158,12 @@ python aws_resource_manager.py --attach_bucket_policy --s3_bucket your-s3-bucket
 
 # Manually attach bucket policy with specific CloudFront distribution ID
 python aws_resource_manager.py --attach_bucket_policy --s3_bucket your-s3-bucket-name --cloudfront_distribution_id EDFDVBD6EXAMPLE
+
+# Update streaming URLs in the website HTML file for a deployed stack
+python aws_resource_manager.py --update_streaming_urls --stack_name your-combined-stack-name
+
+# Update streaming URLs with a custom HTML file path
+python aws_resource_manager.py --update_streaming_urls --stack_name your-combined-stack-name --html_file path/to/index.html
 ```
 
 ## Output

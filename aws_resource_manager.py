@@ -16,7 +16,7 @@ import yaml
 import shutil
 from datetime import datetime
 from pathlib import Path
-from deploy_function import deploy_cloudformation_template, attach_bucket_policy, export_deployed_template, upload_static_website, update_stack_parameters
+from deploy_function import deploy_cloudformation_template, attach_bucket_policy, export_deployed_template, upload_static_website, update_stack_parameters, update_website_streaming_urls
 
 
 def parse_arguments():
@@ -45,6 +45,10 @@ def parse_arguments():
                         help='Attach bucket policy to allow CloudFront to access the S3 bucket')
     parser.add_argument('--cloudfront_distribution_id', type=str,
                         help='CloudFront distribution ID for bucket policy (optional)')
+    parser.add_argument('--update_streaming_urls', action='store_true',
+                        help='Update the streaming URLs in the website HTML file and upload it to S3')
+    parser.add_argument('--html_file', type=str, default='iac/static_website/index.html',
+                        help='Path to the HTML file to update with streaming URLs (default: iac/static_website/index.html)')
     return parser.parse_args()
 
 
@@ -229,6 +233,25 @@ def main():
     # Get output settings
     output_dir = config.get('output', {}).get('report_dir', 'reports')
     report_prefix = config.get('output', {}).get('report_prefix', 'aws_resource_report')
+    
+    # Check if we need to update streaming URLs
+    if args.update_streaming_urls:
+        # Check if stack name is provided
+        if not args.stack_name:
+            print("Error: Stack name is required for updating streaming URLs. Please provide it via --stack_name option.")
+            sys.exit(1)
+            
+        print(f"Updating streaming URLs for stack '{args.stack_name}'...")
+        result = update_website_streaming_urls(args.stack_name, region, args.html_file)
+        
+        if result['status'] == 'error':
+            print(f"Error updating streaming URLs: {result['message']}")
+            sys.exit(1)
+            
+        print("Streaming URLs updated successfully.")
+        if 'website_url' in result:
+            print(f"Website URL: {result['website_url']}")
+        return
     
     # Check if we need to attach a bucket policy
     if args.attach_bucket_policy:
