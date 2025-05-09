@@ -18,7 +18,22 @@ tags:
 
 # Solutions configuration
 solutions:
-  # Static website solution
+  # Combined website and streaming media solution
+  combined_website:
+    # Template location
+    template_path: "iac/combined_website/template.yaml"
+    # Directory for storing deployed templates
+    deployed_dir: "iac/deployed"
+    # Content directory for static website files
+    content_dir: "iac/static_website/content"
+    # Default parameters for CloudFormation deployment
+    parameters:
+      BucketNamePrefix: "flatstone-solutions"
+      OriginShieldRegion: "us-east-1"
+      LiveInputType: "RTMP_PUSH"
+      LiveInputWhitelistCidr: "173.72.178.22/32"
+
+  # Static website solution (legacy)
   static_website:
     # Template location
     template_path: "iac/static_website/template.yaml"
@@ -41,7 +56,7 @@ solutions:
     parameters:
       # No additional parameters needed as they are pulled from the messaging section
   
-  # Streaming media solution for live streaming and video on demand
+  # Streaming media solution for live streaming and video on demand (legacy)
   streaming_media:
     # Template location
     template_path: "iac/streaming_media/template.yaml"

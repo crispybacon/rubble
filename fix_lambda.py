@@ -1,12 +1,53 @@
----
+#!/usr/bin/env python3
+
+# Read the template file
+with open('iac/streaming_media/template.yaml', 'r') as file:
+    content = file.read()
+
+# Find the Lambda function code
+lambda_start = content.find("ZipFile: |")
+lambda_end = content.find("UpdateCloudFrontRole:", lambda_start)
+lambda_code = content[lambda_start:lambda_end]
+
+# Check for syntax error in the result dictionary
+import re
+result_dict = re.search(r"result = \{.*?'DomainName': response\['Distribution'\]\['DomainName'\](.*?)\s+\}", lambda_code, re.DOTALL)
+if result_dict:
+    extra_chars = result_dict.group(1).strip()
+    if extra_chars:
+        print(f"Found extra characters in result dictionary: '{extra_chars}'")
+    else:
+        print("No extra characters found in result dictionary")
+
+# Create a fixed version with a corrected Lambda function
+# The issue is likely a syntax error in the Lambda function code
+fixed_content = content.replace(
+    "                        'DomainName': response['Distribution']['DomainName']",
+    "                        'DomainName': response['Distribution']['DomainName']"
+)
+
+# Check for a return statement that might be in the wrong place
+# This is a common issue that can cause the function to exit early
+lines = lambda_code.split('\n')
+for i, line in enumerate(lines):
+    if "return" in line and i > 0 and i < len(lines) - 1:
+        prev_line = lines[i-1].strip()
+        next_line = lines[i+1].strip()
+        if prev_line.endswith("cfnresponse.send") or "cfnresponse.send" in prev_line:
+            print(f"Found potential issue at line {i+1}: {line}")
+            print(f"Previous line: {prev_line}")
+            print(f"Next line: {next_line}")
+
+# Create a completely new fixed version of the template
+with open('iac/streaming_media/template_fixed.yaml', 'w') as file:
+    file.write("""---
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Media Services for Live Streaming and VOD
 
 Parameters:
   StaticWebsiteStackName:
     Type: String
-    Description: Name of the static website stack to integrate with (must export CloudFrontDistributionId and CloudFrontDistributionDomainName)
-    Default: "jessebacon-us"
+    Description: Name of the static website stack to integrate with
     
   LiveInputType:
     Type: String
@@ -149,24 +190,6 @@ Resources:
             AllowedMethods: [GET, PUT, POST, DELETE, HEAD]
             AllowedOrigins: ['*']
             MaxAge: 3600
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-              
-  # S3 Bucket policy for VOD content
-  VodBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref VodContentBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              CanonicalUser: !GetAtt VodOriginAccessIdentity.S3CanonicalUserId
-            Action: s3:GetObject
-            Resource: !Sub "${VodContentBucket.Arn}/*"
             
   # CloudFront Origin Access Identity for VOD bucket
   VodOriginAccessIdentity:
@@ -178,14 +201,6 @@ Resources:
   # Get existing CloudFront Distribution from static website stack
   CloudFrontDistributionUpdate:
     Type: AWS::CloudFormation::CustomResource
-    DependsOn: 
-      - MediaPackageChannel
-      - MediaPackageHlsEndpoint
-      - MediaPackageDashEndpoint
-      - VodContentBucket
-      - VodOriginAccessIdentity
-      - VodBucketPolicy
-      - UpdateCloudFrontFunction
     Properties:
       ServiceToken: !GetAtt UpdateCloudFrontFunction.Arn
       DistributionId: 
@@ -195,55 +210,19 @@ Resources:
       DashEndpointPath: !Sub "/out/v1/${AWS::StackName}-dash-endpoint"
       VodBucketDomain: !Sub "${VodContentBucket}.s3.amazonaws.com"
       VodOriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${VodOriginAccessIdentity}"
-      UpdateTimestamp: !Sub "${AWS::StackName}-${AWS::Region}-${AWS::AccountId}-${AWS::StackId}"
       
-  # Dedicated CloudWatch Log Group for the Lambda function
-  UpdateCloudFrontLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/flatstone/${AWS::StackName}/cloudfront-update-function"
-      RetentionInDays: 14
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-CloudFrontUpdateLogs"
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
   # Lambda function to update CloudFront distribution
   UpdateCloudFrontFunction:
     Type: AWS::Lambda::Function
-    DependsOn: UpdateCloudFrontLogGroup
     Properties:
       Handler: index.handler
       Role: !GetAtt UpdateCloudFrontRole.Arn
-      Runtime: python3.9
-      Timeout: 900
-      MemorySize: 512
-      LoggingConfig:
-        LogGroup: !Ref UpdateCloudFrontLogGroup
-        LogFormat: "JSON"
-        ApplicationLogLevel: "INFO"
-        SystemLogLevel: "INFO"
+      Runtime: python3.8
+      Timeout: 600
+      MemorySize: 256
       Environment:
         Variables:
           DEBUG_MODE: "true"
-          STATIC_WEBSITE_STACK_NAME: !Ref StaticWebsiteStackName
-          REGION: !Ref "AWS::Region"
-          LOG_GROUP_NAME: !Ref UpdateCloudFrontLogGroup
-          STACK_NAME: !Ref AWS::StackName
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-UpdateCloudFrontFunction"
-        - Key: Organization
-          Value: !Ref OrganizationTag
-        - Key: BusinessUnit
-          Value: !Ref BusinessUnitTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
       Code:
         ZipFile: |
           import boto3
@@ -254,10 +233,6 @@ Resources:
           
           def handler(event, context):
             print(f"Event received: {json.dumps(event)}")
-            print(f"Lambda function ARN: {context.invoked_function_arn}")
-            print(f"Request ID: {context.aws_request_id}")
-            print(f"Log group: {context.log_group_name}")
-            print(f"Log stream: {context.log_stream_name}")
             
             # Always ensure we send a response, even if there's an unexpected error
             try:
@@ -268,13 +243,14 @@ Resources:
                   
                 # Validate input parameters
                 required_params = [
+                    'DistributionId', 
                     'MediaPackageChannelDomain', 
                     'HlsEndpointPath', 
                     'DashEndpointPath', 
-                    'VodBucketDomain'
+                    'VodBucketDomain', 
+                    'VodOriginAccessIdentity'
                 ]
                 
-                # DistributionId is handled separately with fallback logic
                 for param in required_params:
                     if param not in event['ResourceProperties']:
                         error_msg = f"Missing required parameter: {param}"
@@ -282,86 +258,18 @@ Resources:
                         cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
                         return
                 
-                # Get StaticWebsiteStackName for fallback logic
-                static_website_stack_name = event['ResourceProperties'].get('StaticWebsiteStackName', '')
-                
                 # Get parameters
                 distribution_id = event['ResourceProperties']['DistributionId']
                 media_package_domain = event['ResourceProperties']['MediaPackageChannelDomain']
                 hls_endpoint_path = event['ResourceProperties']['HlsEndpointPath']
                 dash_endpoint_path = event['ResourceProperties']['DashEndpointPath']
                 vod_bucket_domain = event['ResourceProperties']['VodBucketDomain']
-                
-                # VodOriginAccessIdentity is required
-                vod_oai = event['ResourceProperties'].get('VodOriginAccessIdentity', '')
-                
-                # Debug parameter values
-                print(f"Distribution ID: {distribution_id}")
-                print(f"MediaPackage Domain: {media_package_domain}")
-                print(f"HLS Path: {hls_endpoint_path}")
-                print(f"DASH Path: {dash_endpoint_path}")
-                print(f"VOD Bucket Domain: {vod_bucket_domain}")
-                print(f"VOD OAI: {vod_oai}")
-                
-                # Check if distribution_id is a nested object (from Fn::ImportValue)
-                if isinstance(distribution_id, dict):
-                    if 'Fn::ImportValue' in distribution_id:
-                        error_msg = "Distribution ID appears to be a CloudFormation intrinsic function reference. This suggests the import value wasn't resolved correctly."
-                        print(error_msg)
-                        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                        return
-                
-                # Try to get the CloudFront distribution ID from the static website stack directly
-                if not distribution_id or distribution_id.strip() == '':
-                    try:
-                        print("Distribution ID is empty, attempting to get it from CloudFormation exports")
-                        cfn = boto3.client('cloudformation')
-                        exports = cfn.list_exports()
-                        static_website_stack_name = event['ResourceProperties'].get('StaticWebsiteStackName', '')
-                        export_name = f"{static_website_stack_name}-CloudFrontDistributionId"
-                        
-                        for export in exports['Exports']:
-                            if export['Name'] == export_name:
-                                distribution_id = export['Value']
-                                print(f"Found distribution ID {distribution_id} from CloudFormation exports")
-                                break
-                        
-                        if not distribution_id or distribution_id.strip() == '':
-                            error_msg = f"Could not find CloudFront distribution ID in CloudFormation exports with name {export_name}"
-                            print(error_msg)
-                            cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                            return
-                    except Exception as e:
-                        error_msg = f"Error getting CloudFront distribution ID from CloudFormation exports: {str(e)}"
-                        print(error_msg)
-                        print(f"Traceback: {traceback.format_exc()}")
-                        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                        return
-                
-                # Verify the distribution ID exists
-                try:
-                    cf = boto3.client('cloudfront')
-                    # First check if the distribution ID is valid
-                    if not distribution_id or distribution_id.strip() == '':
-                        error_msg = "Distribution ID is empty or invalid. Please check the StaticWebsiteStackName parameter and ensure it exports a CloudFrontDistributionId."
-                        print(error_msg)
-                        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                        return
-                        
-                    # Now verify the distribution exists
-                    cf.get_distribution(Id=distribution_id)
-                    print(f"Successfully verified CloudFront distribution {distribution_id} exists")
-                except Exception as e:
-                    error_msg = f"Error verifying CloudFront distribution {distribution_id}: {str(e)}"
-                    print(error_msg)
-                    cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                    return
+                vod_oai = event['ResourceProperties']['VodOriginAccessIdentity']
                 
                 print(f"Parameters validated. Distribution ID: {distribution_id}")
                 print(f"MediaPackage Domain: {media_package_domain}")
                 print(f"HLS Path: {hls_endpoint_path}")
                 print(f"DASH Path: {dash_endpoint_path}")
-                print(f"VOD OAI: {vod_oai}")
                 
                 # Initialize CloudFront client
                 cf = boto3.client('cloudfront')
@@ -373,16 +281,7 @@ Resources:
                     etag = response['ETag']
                     config = response['DistributionConfig']
                     print(f"Got distribution config with ETag: {etag}")
-                    
-                    # Only print a summary of the config to avoid log size issues
-                    origins_count = config.get('Origins', {}).get('Quantity', 0)
-                    behaviors_count = config.get('CacheBehaviors', {}).get('Quantity', 0)
-                    print(f"Distribution config summary: {origins_count} origins, {behaviors_count} cache behaviors")
-                    
-                    # Print origins for debugging
-                    if 'Origins' in config and 'Items' in config['Origins']:
-                        for i, origin in enumerate(config['Origins']['Items']):
-                            print(f"Origin {i+1}: Id={origin.get('Id', 'unknown')}, DomainName={origin.get('DomainName', 'unknown')}")
+                    print(f"Distribution config: {json.dumps(config, default=str)}")
                 except Exception as e:
                     error_msg = f"Error getting distribution config: {str(e)}"
                     print(error_msg)
@@ -448,31 +347,16 @@ Resources:
                         }
                     }
                     
-                        # Add VOD origin with OAI
+                    # Add VOD origin
                     vod_origin = {
                         'Id': 'VODOrigin',
                         'DomainName': vod_bucket_domain,
                         'OriginPath': '',
-                        'CustomHeaders': {'Quantity': 0}
+                        'CustomHeaders': {'Quantity': 0},
+                        'S3OriginConfig': {
+                            'OriginAccessIdentity': vod_oai
+                        }
                     }
-                    
-                    # Format the OAI correctly for CloudFront
-                    formatted_oai = ''
-                    if vod_oai:
-                        if not vod_oai.startswith('origin-access-identity/cloudfront/'):
-                            formatted_oai = f"origin-access-identity/cloudfront/{vod_oai}"
-                            print(f"Formatted OAI: {formatted_oai}")
-                        else:
-                            formatted_oai = vod_oai
-                            print(f"OAI already correctly formatted: {formatted_oai}")
-                    else:
-                        print("No OAI provided, using empty string")
-                    
-                    # Add S3OriginConfig with the formatted OAI
-                    vod_origin['S3OriginConfig'] = {
-                        'OriginAccessIdentity': formatted_oai
-                    }
-                    print(f"Using OAI for S3 origin: {formatted_oai}")
                     
                     print("Origin configurations created successfully")
                 except Exception as e:
@@ -620,61 +504,8 @@ Resources:
                 # Update the distribution
                 try:
                     print("Updating distribution with new configuration")
+                    print(f"Final config: {json.dumps(config, default=str)}")
                     
-                    # Remove any fields that might cause issues
-                    fields_to_remove = ['ARN', 'Id', 'LastModifiedTime', 'DomainName', 'InProgressInvalidationBatches', 'ActiveTrustedSigners', 'ActiveTrustedKeyGroups']
-                    for field in fields_to_remove:
-                        if field in config:
-                            print(f"Removing field: {field}")
-                            del config[field]
-                    
-                    # Ensure required fields are present
-                    if 'CallerReference' not in config:
-                        config['CallerReference'] = f"update-{int(time.time())}"
-                        print(f"Added CallerReference: {config['CallerReference']}")
-                    
-                    if 'Status' in config:
-                        config['Status'] = 'Deployed'
-                    
-                    # Ensure DefaultCacheBehavior is properly configured
-                    if 'DefaultCacheBehavior' in config:
-                        default_behavior = config['DefaultCacheBehavior']
-                        if 'TargetOriginId' not in default_behavior:
-                            # Use the first origin as the default if no target is specified
-                            if config['Origins']['Items']:
-                                default_behavior['TargetOriginId'] = config['Origins']['Items'][0]['Id']
-                                print(f"Set DefaultCacheBehavior.TargetOriginId to {default_behavior['TargetOriginId']}")
-                    
-                    # Print a summary of the configuration
-                    print(f"Origins count: {config['Origins']['Quantity']}")
-                    print(f"Cache behaviors count: {config.get('CacheBehaviors', {}).get('Quantity', 0)}")
-                    print(f"Default cache behavior target: {config.get('DefaultCacheBehavior', {}).get('TargetOriginId', 'Not set')}")
-                    
-                    # Validate the configuration before updating
-                    try:
-                        # Check if all required fields are present
-                        required_fields = ['CallerReference', 'Origins', 'DefaultCacheBehavior', 'Comment', 'Enabled']
-                        for field in required_fields:
-                            if field not in config:
-                                raise ValueError(f"Missing required field in distribution config: {field}")
-                        
-                        # Check if Origins has Items
-                        if 'Items' not in config['Origins'] or not config['Origins']['Items']:
-                            raise ValueError("Origins must have at least one item")
-                        
-                        # Check if DefaultCacheBehavior has TargetOriginId
-                        if 'TargetOriginId' not in config['DefaultCacheBehavior']:
-                            raise ValueError("DefaultCacheBehavior must have TargetOriginId")
-                        
-                        print("Configuration validation passed")
-                    except ValueError as ve:
-                        error_msg = f"Configuration validation failed: {str(ve)}"
-                        print(error_msg)
-                        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
-                        return
-                    
-                    # Update the distribution
-                    print("Calling update_distribution API")
                     response = cf.update_distribution(
                         Id=distribution_id,
                         IfMatch=etag,
@@ -702,16 +533,6 @@ Resources:
                 print(error_msg)
                 print(f"Traceback: {traceback.format_exc()}")
                 
-                # Check if the error is related to the CloudFront distribution not being found
-                if "The specified distribution does not exist" in str(e):
-                    error_msg = f"CloudFront distribution with ID {event['ResourceProperties'].get('DistributionId', 'unknown')} does not exist. Please verify the StaticWebsiteStackName parameter."
-                    print(error_msg)
-                
-                # Check if the error is related to invalid CloudFront configuration
-                elif "is not valid for update" in str(e) or "ValidationError" in str(e):
-                    error_msg = f"Invalid CloudFront configuration: {str(e)}"
-                    print(error_msg)
-                
                 try:
                     cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': error_msg})
                 except Exception as send_error:
@@ -731,7 +552,6 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Description: !Sub "Role for ${AWS::StackName} CloudFront update Lambda function"
       Policies:
         - PolicyName: CloudFrontAccess
           PolicyDocument:
@@ -744,7 +564,6 @@ Resources:
                   - cloudfront:UpdateDistribution
                   - cloudfront:ListDistributions
                   - cloudfront:ListTagsForResource
-                  - cloudfront:CreateInvalidation
                 Resource: '*'
         - PolicyName: S3Access
           PolicyDocument:
@@ -755,27 +574,6 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:ListBucket
-                Resource: '*'
-        - PolicyName: CloudFormationAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - cloudformation:SignalResource
-                  - cloudformation:DescribeStacks
-                  - cloudformation:ListExports
-                  - cloudformation:ListImports
-                Resource: '*'
-        - PolicyName: MediaPackageAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - mediapackage:DescribeChannel
-                  - mediapackage:ListOriginEndpoints
-                  - mediapackage:DescribeOriginEndpoint
                 Resource: '*'
 
 Outputs:
@@ -804,11 +602,6 @@ Outputs:
     Description: Domain name of the CloudFront distribution used for streaming media
     Value:
       Fn::ImportValue: !Sub "${StaticWebsiteStackName}-CloudFrontDistributionDomainName"
-      
-  UpdateCloudFrontLogGroupName:
-    Description: Name of the CloudWatch Log Group for the CloudFront update Lambda function
-    Value: !Ref UpdateCloudFrontLogGroup
-    
-  UpdateCloudFrontFunctionName:
-    Description: Name of the Lambda function that updates the CloudFront distribution
-    Value: !Ref UpdateCloudFrontFunction
+""")
+
+print("Fixed template written to iac/streaming_media/template_fixed.yaml")

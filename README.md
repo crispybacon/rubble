@@ -4,6 +4,20 @@ A Python tool for managing AWS resources, including generating reports about dep
 
 ## Recent Fixes
 
+### Combined Website and Streaming Media Solution
+
+Added a new combined solution that deploys both the static website and streaming media resources in a single CloudFormation stack. This eliminates the need for the Lambda function that was previously used to update the CloudFront distribution with streaming media origins and behaviors. The combined solution:
+
+1. Creates separate S3 buckets for static web content and streaming media content
+2. Configures a single CloudFront distribution with origins for both static content and streaming media
+3. Sets up path-based behaviors for live streaming and video on demand
+4. Deploys all resources in a single stack, simplifying the deployment process
+
+To deploy the combined solution:
+```bash
+python aws_resource_manager.py --deploy combined_website --stack_name your-combined-stack-name
+```
+
 ### CloudFront Distribution Deployment Timeout Fix
 
 Fixed an issue where the CloudFront distribution would fail to deploy with the error:
@@ -301,6 +315,83 @@ This solution deploys the infrastructure needed for SMS and email contact forms 
 - API Gateway is configured with appropriate CORS headers
 - Lambda function has minimal IAM permissions
 - Dead Letter Queue for handling failed message deliveries
+
+</details>
+
+<details>
+<summary><strong>Combined Website and Streaming Media</strong> - Single stack deployment of static website and streaming media</summary>
+
+### Combined Website and Streaming Media Solution
+
+This solution deploys a static website with streaming media capabilities using a single CloudFormation stack. The architecture includes:
+
+- Separate S3 buckets for static content and VOD content
+- CloudFront distribution with origins for static content, live streaming, and VOD
+- MediaLive for ingesting and transcoding live video
+- MediaPackage for packaging and protecting live content
+- Path-based behaviors for different content types
+
+### Deployment Instructions
+
+1. Update the configuration in `config.yaml` with your preferred settings:
+   ```yaml
+   solutions:
+     combined_website:
+       parameters:
+         BucketNamePrefix: "your-bucket-prefix"
+         OriginShieldRegion: "us-east-2"
+         LiveInputType: "RTMP_PUSH"
+         LiveInputWhitelistCidr: "0.0.0.0/0"  # Restrict this to your IP range for production
+   ```
+
+2. Deploy the combined CloudFormation stack:
+   ```bash
+   python aws_resource_manager.py --deploy combined_website --stack_name your-combined-stack-name
+   ```
+
+3. Upload the website content to the S3 bucket:
+   ```bash
+   python aws_resource_manager.py --upload_resume --s3_bucket your-s3-bucket-name
+   ```
+
+4. Access your website using the CloudFront URL provided in the deployment output.
+
+### Using the Streaming Media Features
+
+#### Live Streaming
+
+1. To stream live content, use a streaming software like OBS Studio or FFmpeg to push to the MediaLive input URL provided in the CloudFormation outputs.
+2. Configure your streaming software with the following settings:
+   - Protocol: RTMP (or as configured in your deployment)
+   - URL: The MediaLive input URL from the CloudFormation outputs
+   - Stream key: As provided in the MediaLive input URL
+   - Video codec: H.264
+   - Audio codec: AAC
+   - Resolution: 1080p or 720p recommended
+   - Bitrate: 5 Mbps or as needed for your quality requirements
+
+3. On your website, click the "Live Stream" button to view the live stream.
+
+#### Video on Demand (VOD)
+
+1. Upload your video files to the S3 bucket created for VOD content (provided in the CloudFormation outputs).
+2. The videos will be automatically processed and made available for streaming.
+3. On your website, click the "Video on Demand" button to access the VOD content.
+
+### Security Considerations
+
+- The default configuration allows streaming input from any IP address (0.0.0.0/0). For production use, restrict the `LiveInputWhitelistCidr` parameter to your specific IP range.
+- All content is delivered via CloudFront with HTTPS for secure transmission.
+- Static web content and streaming media content are stored in separate S3 buckets for enhanced security.
+- All S3 buckets have public access blocked and are only accessible through CloudFront.
+
+### Updating the Deployed Solution
+
+To update an existing CloudFormation stack with changes:
+
+```bash
+python aws_resource_manager.py --deploy combined_website --stack_name your-combined-stack-name --update
+```
 
 </details>
 

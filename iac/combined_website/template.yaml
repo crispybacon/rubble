@@ -1,0 +1,411 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Combined Static Website and Media Services for Live Streaming and VOD
+
+Parameters:
+  # Static Website Parameters
+  BucketNamePrefix:
+    Type: String
+    Description: Prefix for S3 bucket name
+    Default: "flatstone-solutions"
+
+  OriginShieldRegion:
+    Type: String
+    Description: AWS region for CloudFront Origin Shield
+    Default: "us-east-2"
+    
+  # Streaming Media Parameters
+  LiveInputType:
+    Type: String
+    Default: RTMP_PUSH
+    AllowedValues:
+      - RTMP_PUSH
+      - RTP_PUSH
+      - URL_PULL
+    Description: Type of input for live streaming
+  
+  LiveInputWhitelistCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR block to whitelist for live streaming input
+    
+  # Common Parameters
+  OrganizationTag:
+    Type: String
+    Description: Organization tag for resources
+    Default: "flatstone services"
+    
+  BusinessUnitTag:
+    Type: String
+    Description: Business unit tag for resources
+    Default: "marketing"
+    
+  EnvironmentTag:
+    Type: String
+    Description: Environment tag for resources
+    Default: "dev"
+
+Resources:
+  # S3 Bucket for static website content
+  StaticWebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketNamePrefix}-static-${AWS::Region}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  # S3 Bucket for VOD content
+  VodContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${BucketNamePrefix}-vod-${AWS::Region}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST, DELETE, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  # CloudFront Origin Access Control for S3 buckets
+  CloudFrontOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-OAC"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # S3 Bucket Policy for static website content
+  StaticWebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticWebsiteBucket
+      PolicyDocument:
+        Version: '2008-10-17'
+        Id: PolicyForCloudFrontPrivateContent
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${StaticWebsiteBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+  # S3 Bucket Policy for VOD content
+  VodBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref VodContentBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${VodContentBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+  # MediaLive Channel for live streaming
+  MediaLiveChannel:
+    Type: AWS::MediaLive::Channel
+    Properties:
+      ChannelClass: SINGLE_PIPELINE
+      Name: !Sub "${AWS::StackName}-channel"
+      InputAttachments:
+        - InputId: !Ref MediaLiveInput
+          InputAttachmentName: LiveInput
+      Destinations:
+        - Id: "MediaPackageDestination"
+          MediaPackageSettings:
+            - ChannelId: !Ref MediaPackageChannel
+      EncoderSettings:
+        AudioDescriptions:
+          - AudioSelectorName: "Default"
+            Name: "audio_1"
+            CodecSettings:
+              AacSettings:
+                Profile: LC
+                RateControlMode: CBR
+                Bitrate: 192000
+        VideoDescriptions:
+          - Name: "video_1"
+            RespondToAfd: "NONE"
+            ScalingBehavior: "DEFAULT"
+            Width: 1920
+            Height: 1080
+            CodecSettings:
+              H264Settings:
+                Profile: MAIN
+                RateControlMode: CBR
+                Bitrate: 5000000
+                FramerateControl: "SPECIFIED"
+                FramerateNumerator: 30
+                FramerateDenominator: 1
+                ParControl: "SPECIFIED"
+                ParNumerator: 1
+                ParDenominator: 1
+        TimecodeConfig:
+          Source: "EMBEDDED"
+        OutputGroups:
+          - Name: "MediaPackage_Group"
+            OutputGroupSettings:
+              MediaPackageGroupSettings:
+                Destination:
+                  DestinationRefId: "MediaPackageDestination"
+            Outputs:
+              - AudioDescriptionNames:
+                  - "audio_1"
+                VideoDescriptionName: "video_1"
+                OutputName: "MediaPackage_Output"
+                OutputSettings:
+                  MediaPackageOutputSettings: {}
+                
+  # MediaLive Input for receiving live streams
+  MediaLiveInput:
+    Type: AWS::MediaLive::Input
+    Properties:
+      Type: !Ref LiveInputType
+      InputSecurityGroups:
+        - !Ref MediaLiveInputSecurityGroup
+      Destinations:
+        - StreamName: !Sub "${AWS::StackName}/live"
+        
+  # Security group for MediaLive Input
+  MediaLiveInputSecurityGroup:
+    Type: AWS::MediaLive::InputSecurityGroup
+    Properties:
+      WhitelistRules:
+        - Cidr: !Ref LiveInputWhitelistCidr
+          
+  # MediaPackage Channel for packaging live content
+  MediaPackageChannel:
+    Type: AWS::MediaPackage::Channel
+    Properties:
+      Id: !Sub "${AWS::StackName}-channel"
+      Description: Channel for live streaming
+      
+  # MediaPackage Origin Endpoint for HLS
+  MediaPackageHlsEndpoint:
+    Type: AWS::MediaPackage::OriginEndpoint
+    Properties:
+      ChannelId: !Ref MediaPackageChannel
+      Id: !Sub "${AWS::StackName}-hls-endpoint"
+      HlsPackage:
+        SegmentDurationSeconds: 6
+        PlaylistWindowSeconds: 60
+
+  # MediaPackage Origin Endpoint for DASH
+  MediaPackageDashEndpoint:
+    Type: AWS::MediaPackage::OriginEndpoint
+    Properties:
+      ChannelId: !Ref MediaPackageChannel
+      Id: !Sub "${AWS::StackName}-dash-endpoint"
+      DashPackage:
+        SegmentDurationSeconds: 6
+        ManifestWindowSeconds: 60
+
+  # CloudFront Distribution for static website, live streaming, and VOD
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          # Static Website Origin
+          - DomainName: !Sub "${StaticWebsiteBucket}.s3.${AWS::Region}.amazonaws.com"
+            Id: StaticWebsiteOrigin
+            OriginAccessControlId: !GetAtt CloudFrontOriginAccessControl.Id
+            S3OriginConfig: {}
+            OriginShield:
+              Enabled: true
+              OriginShieldRegion: !Ref OriginShieldRegion
+          
+          # VOD Origin
+          - DomainName: !Sub "${VodContentBucket}.s3.${AWS::Region}.amazonaws.com"
+            Id: VODOrigin
+            OriginAccessControlId: !GetAtt CloudFrontOriginAccessControl.Id
+            S3OriginConfig: {}
+            OriginShield:
+              Enabled: true
+              OriginShieldRegion: !Ref OriginShieldRegion
+          
+          # HLS Origin
+          - DomainName: !Join ["", [!Ref MediaPackageChannel, ".mediapackage.", !Ref "AWS::Region", ".amazonaws.com"]]
+            Id: HLSOrigin
+            OriginPath: !Sub "/out/v1/${AWS::StackName}-hls-endpoint"
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+          
+          # DASH Origin
+          - DomainName: !Join ["", [!Ref MediaPackageChannel, ".mediapackage.", !Ref "AWS::Region", ".amazonaws.com"]]
+            Id: DASHOrigin
+            OriginPath: !Sub "/out/v1/${AWS::StackName}-dash-endpoint"
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+        
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        
+        # Default Cache Behavior for static website content
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Using managed cache policy: CachingOptimized
+          TargetOriginId: StaticWebsiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+        
+        # Cache Behaviors for streaming media
+        CacheBehaviors:
+          # Live Streaming Cache Behavior
+          - PathPattern: '/live/*'
+            TargetOriginId: HLSOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+              Headers: []
+              QueryStringCacheKeys: []
+            MinTTL: 0
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            Compress: true
+          
+          # VOD Cache Behavior
+          - PathPattern: '/vod/*'
+            TargetOriginId: VODOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+              Headers: []
+              QueryStringCacheKeys: []
+            MinTTL: 0
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            Compress: true
+        
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      
+      Tags:
+        - Key: Organization
+          Value: !Ref OrganizationTag
+        - Key: BusinessUnit
+          Value: !Ref BusinessUnitTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+Outputs:
+  CloudFrontDistributionDomainName:
+    Description: "Domain name of the CloudFront distribution"
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionDomainName"
+  
+  CloudFrontDistributionId:
+    Description: "ID of the CloudFront distribution"
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+  
+  StaticWebsiteBucketName:
+    Description: "Name of the S3 bucket for static website content"
+    Value: !Ref StaticWebsiteBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-StaticWebsiteBucketName"
+  
+  VodBucketName:
+    Description: "Name of the S3 bucket for VOD content"
+    Value: !Ref VodContentBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-VodBucketName"
+  
+  MediaLiveInputUrl:
+    Description: "URL for pushing live streams to MediaLive"
+    Value: !Select [0, !GetAtt MediaLiveInput.Destinations]
+    Export:
+      Name: !Sub "${AWS::StackName}-MediaLiveInputUrl"
+  
+  HlsEndpointUrl:
+    Description: "HLS endpoint URL for live streaming"
+    Value: !GetAtt MediaPackageHlsEndpoint.Url
+    Export:
+      Name: !Sub "${AWS::StackName}-HlsEndpointUrl"
+  
+  DashEndpointUrl:
+    Description: "DASH endpoint URL for live streaming"
+    Value: !GetAtt MediaPackageDashEndpoint.Url
+    Export:
+      Name: !Sub "${AWS::StackName}-DashEndpointUrl"

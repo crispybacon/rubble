@@ -23,8 +23,8 @@ def parse_arguments():
                         help='CloudFormation stack name for the messaging solution')
     parser.add_argument('--static_website_stack', type=str,
                         help='Name of the static website stack to update')
-    parser.add_argument('--streaming_stack', type=str,
-                        help='CloudFormation stack name for the streaming media solution')
+    parser.add_argument('--combined_stack', type=str,
+                        help='CloudFormation stack name for the combined website and streaming media solution')
     parser.add_argument('--region', type=str,
                         help='AWS region (overrides config file)')
     return parser.parse_args()
@@ -730,9 +730,10 @@ def main():
             sys.exit(1)
     
     # Check if we need to update the static website with streaming media endpoints
-    if args.streaming_stack:
+    if args.streaming_stack or args.combined_stack:
         # Get the streaming endpoints from the stack outputs
-        streaming_endpoints = get_streaming_endpoints(args.streaming_stack, region)
+        streaming_stack = args.streaming_stack if args.streaming_stack else args.combined_stack
+        streaming_endpoints = get_streaming_endpoints(streaming_stack, region)
         
         if streaming_endpoints:
             print(f"Found streaming endpoints: {streaming_endpoints}")

@@ -29,7 +29,7 @@ def parse_arguments():
                         help='Upload static website content to S3 bucket')
     parser.add_argument('--s3_bucket', type=str,
                         help='S3 bucket name for resume upload (overrides config file)')
-    parser.add_argument('--deploy', type=str, choices=['static_website', 'messaging', 'streaming_media'],
+    parser.add_argument('--deploy', type=str, choices=['combined_website', 'static_website', 'messaging', 'streaming_media'],
                         help='Deploy a CloudFormation template for the specified solution')
     parser.add_argument('--update', action='store_true',
                         help='Update an existing CloudFormation stack with changes')
@@ -280,6 +280,7 @@ def main():
             sys.exit(1)
             
         # Check if static_website_stack is provided when deploying streaming media solution
+        # Only required for the legacy streaming_media solution, not for combined_website
         if solution_name == 'streaming_media' and not args.static_website_stack:
             print("Error: Static website stack name is required when deploying streaming media solution. Please provide it via --static_website_stack option.")
             sys.exit(1)
@@ -412,6 +413,42 @@ def main():
                         print("Warning: Failed to upload updated static website content.")
             except Exception as e:
                 print(f"Warning: Failed to update static website with streaming media: {e}")
+                
+        # If this is the combined website solution, update the website with streaming media endpoints
+        if solution_name == 'combined_website' and 'outputs' in result:
+            print("\nUpdating website with streaming media endpoints...")
+            try:
+                # Import the update_website module
+                import update_website
+                
+                # Get the streaming endpoints from the result
+                streaming_endpoints = {}
+                if 'HlsEndpointUrl' in result['outputs']:
+                    streaming_endpoints['hls'] = result['outputs']['HlsEndpointUrl']
+                if 'DashEndpointUrl' in result['outputs']:
+                    streaming_endpoints['dash'] = result['outputs']['DashEndpointUrl']
+                if 'MediaLiveInputUrl' in result['outputs']:
+                    streaming_endpoints['input'] = result['outputs']['MediaLiveInputUrl']
+                if 'VodBucketName' in result['outputs']:
+                    streaming_endpoints['vod'] = result['outputs']['VodBucketName']
+                
+                # Add the streaming media solution to the Solution Demonstrations section
+                if not update_website.add_streaming_media_to_solution_demos(config):
+                    print("Warning: Failed to add streaming media solution to Solution Demonstrations section.")
+                
+                # Add the streaming media buttons to the website
+                if not update_website.add_streaming_media_buttons(streaming_endpoints, config):
+                    print("Warning: Failed to add streaming media buttons to the website.")
+                
+                # Upload the updated website content to the S3 bucket
+                s3_bucket = result['outputs'].get('StaticWebsiteBucketName')
+                if s3_bucket:
+                    print(f"\nUploading website content to S3 bucket: {s3_bucket}")
+                    success = upload_static_website(s3_bucket, region, config)
+                    if not success:
+                        print("Warning: Failed to upload website content.")
+            except Exception as e:
+                print(f"Warning: Failed to update website with streaming media: {e}")
             
         # Provide instructions for exporting the template
         if not args.export_template:
